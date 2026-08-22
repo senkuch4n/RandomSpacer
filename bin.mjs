@@ -6,6 +6,11 @@ import { isWindows } from 'which-runtime'
 import path from 'bare-path'
 import pkg from './package.json'
 import App from './app.js'
+import rngModule from './src/engine/rng.js'
+import gameLoop from './src/game/loop.js'
+
+const { createRng } = rngModule
+const { startGame } = gameLoop
 
 const appName = pkg.productName || pkg.name
 const isDev = path.basename(Bare.argv[0]) === (isWindows ? 'bare.exe' : 'bare')
@@ -40,23 +45,48 @@ const app = new App({
   name: isWindows ? appName + '.exe' : appName
 })
 
-app.on('message', (message) => console.log(message))
-app.on('updating', () => console.log('[updater] getting new update'))
-app.on('updating-delta', (delta) => console.log('[updater]', delta))
-app.on('updated', () => console.log('[updater] update complete... applying'))
-app.on('update-applied', () =>
-  console.log('[updater] applied update, restart to run latest version')
-)
-app.on('error', (err) => console.error('[app:error]', err))
+// Once the game starts it owns the terminal (raw input, full-screen ANSI
+// redraws), so updater notifications can't go through console.log anymore
+// — they'd tear the frame. Route them into the in-game HUD status line
+// instead, falling back to console.log for the brief window before the
+// game loop is up.
+let game = null
+const notify = (message) => (game ? game.setStatus(message) : console.log(message))
 
-process.on('SIGHUP', () => app.exit(129))
-process.on('SIGINT', () => app.exit(130))
-process.on('SIGQUIT', () => app.exit(131))
-process.on('SIGTERM', () => app.exit(143))
+app.on('message', (message) => notify(message))
+app.on('updating', () => notify('[updater] descargando actualizacion'))
+app.on('updating-delta', (delta) => notify(`[updater] ${delta}`))
+app.on('updated', () => notify('[updater] actualizacion lista, aplicando'))
+app.on('update-applied', () => notify('[updater] actualizado, reinicia para ver los cambios'))
+app.on('error', (err) => {
+  if (game) game.stop()
+  console.error('[app:error]', err)
+})
+
+// game.stop()'s onExit calls back into shutdown() (the player pressed Q
+// in-game), and shutdown() calls game.stop() (a signal arrived) — guard
+// against the resulting re-entrant loop so app.exit() only ever runs once.
+let shuttingDown = false
+async function shutdown(code) {
+  if (shuttingDown) return
+  shuttingDown = true
+  if (game) game.stop()
+  await app.exit(code)
+}
+
+process.on('SIGHUP', () => shutdown(129))
+process.on('SIGINT', () => shutdown(130))
+process.on('SIGQUIT', () => shutdown(131))
+process.on('SIGTERM', () => shutdown(143))
 
 try {
   await app.ready()
-  console.log('\nCLI ready. Press Ctrl+C to stop.\n')
+
+  const rng = createRng()
+  game = startGame({
+    rng,
+    onExit: (code) => shutdown(code ?? 0)
+  })
 } catch (err) {
   console.error('[app:error]', err)
   await app.close().finally(() => Bare.exit(1))

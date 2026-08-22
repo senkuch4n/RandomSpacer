@@ -1,79 +1,71 @@
-# hello-pear-bare
+# RandomSpace
 
-> Pear Hello World for Standalone Bare Processes with `pear-runtime` worker
+> Terminal Asteroids-like with rotating bosses and item pickups, deployed on Pear with peer-to-peer OTA updates.
 
-End-to-end boilerplate for embedding [pear-runtime] into the [Bare] worker of a [Bare] CLI with peer-to-peer OTA update support.
+Built for the **Pears Track** at [hackathon]. Started from [`hello-pear-bare`][hello-pear-bare], **`main` branch** (the updater runs `pear-runtime` inside a Bare worker thread, keeping P2P/update logic off the main thread while the game loop owns it).
 
-This boilerplate uses the companion [`hello-pear-worker`][hello-pear-worker] as a reusable cross-platform local backend. Keeping networking, storage and updates in a separate worker lets mobile apps, desktop UIs and standalone Bare applications share the same backend implementation while each parent owns its platform-specific interface.
+## Play it
 
-- Peer-to-Peer deployment with [pear][pear-docs] CLI
-- Peer-to-Peer Over-the-Air updates with [`pear-runtime`][pear-runtime] module
-- Bare worker process via `PearRuntime.run(...)`
-- Cross-platform standalone distributables via [`bare-build`][bare-build]
+```sh
+pear install pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy
+```
 
-## Variants
+Then run the installed `randomspace` binary in a real terminal (raw keyboard input needs a TTY — it won't work piped or in a non-interactive shell).
 
-- (current) [`main`](https://github.com/holepunchto/hello-pear-bare/tree/main): runs `pear-runtime` inside a Bare worker thread.
-- [`single-thread`](https://github.com/holepunchto/hello-pear-bare/tree/variant/single-thread): workerless with `pear-runtime` updates.
-- [`daemon`](https://github.com/holepunchto/hello-pear-bare/tree/variant/daemon): runs `pear-runtime` in a detached updater daemon.
+**Controls**
 
-## Table of Contents
+| Key | Action |
+| --- | --- |
+| `A`/`D` or `←`/`→` | Rotate |
+| `W` or `↑` | Thrust |
+| `Space` | Fire current weapon |
+| `E` / `Tab` | Cycle weapon |
+| `X` | Use ability (shockwave) |
+| `Q` / `Ctrl+C` | Quit |
 
-- [OS Support](#os-support)
-- [Requirements](#requirements)
-- [Development](#development)
-  - [Install Dependencies](#install-dependencies)
-  - [Create an upgrade link](#create-an-upgrade-link)
-  - [Start](#start)
-- [Architecture](#architecture)
-  - [Updates](#updates)
-  - [Workers](#workers)
-- [Peer-to-Peer Deployments](#peer-to-peer-deployments)
-- [Installing Distributables](#installing-distributables)
-- [Scripts](#scripts)
-- [Project Structure](#project-structure)
-- [Troubleshooting](#troubleshooting)
+## What it is
 
-## OS Support
+Classic Asteroids loop — rotate, thrust, shoot, dodge — with two systems layered on top:
 
-- **macOS** — arm64, x64
-- **Linux** — arm64, x64
-- **Windows** — arm64, x64
+- **Bosses.** Clearing a wave's asteroids spawns a boss from a 5-entry roster (`src/bosses/`), each with its own movement and attack pattern. The roster is exactly the kind of thing this track's OTA requirement is built for: add a boss module, register it, `pear stage` a new version, and every installed copy picks it up next run — no reinstall.
+- **Items.** The ship starts with the default shot only. Weapons (bomb, homing missile, boomerang, burst fire) and the shockwave ability spawn as field pickups and get added to `src/items/`; a life pickup heals directly. Same OTA story as bosses — new item, new file, new release.
+- **RNG.** All randomness (asteroid spawns, pickup rolls, boss selection) goes through `src/engine/rng.js`, a thin wrapper around one injectable source function. That's the seam for swapping in a teammate-provided RNG engine without touching game logic — see the file header for the exact contract.
 
-## Requirements
+Player starts with **2 lives**.
 
-- `npm` via [Node.js][nodejs]
-- [pear][pear-docs] - `npx pear`
+## Architecture
+
+```
+bin.mjs              entrypoint: boots the updater (app.js -> workers/main.js) then the game
+src/engine/rng.js     injectable RNG wrapper (float/int/range/pick/weighted)
+src/engine/vector.js  2D vector helpers
+src/entities/         ship, asteroid, projectile, pickup, boss — plain data + factories
+src/items/            weapon/ability/pickup registry — OTA-friendly, see index.js
+src/bosses/           boss roster — OTA-friendly, see index.js
+src/game/world.js     simulation: physics, collisions, waves, progression
+src/game/loop.js      ties World to the renderer + input on a fixed tick
+src/render/terminal.js  ANSI renderer (bare-tty WriteStream)
+src/render/input.js     raw-mode keyboard capture (bare-tty ReadStream)
+```
+
+Updater events (`updating`, `updated`, `update-applied`, …) are routed into the in-game HUD status line instead of `console.log`, since the game owns the terminal full-screen once it starts.
+
+## OS support / binaries built this weekend
+
+Standalone binaries built via `bare-build --standalone` and staged for `pear install`:
+
+- macOS — arm64, x64
+- Linux — arm64, x64
+- Windows — arm64, x64
 
 ## Development
 
-### Install Dependencies
-
 ```sh
 npm install
+npm start              # dev mode, updates disabled, needs a real terminal
 ```
 
-### Create an upgrade link
-
-This template expects `package.json` to contain a valid `pear://` link in the `upgrade` field. If it still contains the placeholder `pear://<YOUR_KEY_HERE>`, startup will fail with `INVALID_URL`.
-
-Create a link with [`pear touch`](https://docs.pears.com/reference/cli.html#pear-touch-flags-channel):
-
-```sh
-pear touch
-```
-
-Copy the generated `pear://...` link into the `upgrade` field in `package.json`.
-
-### Start
-
-Start app in development mode:
-
-```sh
-npm start
-```
-
-By default this repo starts with `--no-updates` in development to avoid local dev binaries being swapped while you iterate.
+`package.json` already has a live `upgrade` link generated with `pear touch` for this project — do not need to regenerate it unless you're forking this into a new release line.
 
 Enable updates for local flow testing:
 
@@ -81,74 +73,31 @@ Enable updates for local flow testing:
 npm start -- --updates
 ```
 
-## Architecture
-
-### Updates
-
-Updates are managed by the `App` class in `app.js`, which wraps the updater lifecycle as a ready resource and emits update events for `bin.mjs` to log.
-
-The worker uses `pear-runtime` and the configured `upgrade` link in `package.json`.
-
-Per-run disable updates:
-
-```sh
-npm start -- --no-updates
-```
-
-### Workers
-
-The main CLI starts `workers/main.js` as a Bare sidecar and communicates with it over framed IPC.
-
-## Peer-to-Peer Deployments
-
-Use the [`pear`][pear-docs] CLI to deploy applications.
-
-Set the `upgrade` field in `package.json` to your distribution drive link, then follow the default flow from section 4 onward:
-
-[hello-pear-electron: 4. Build Deployment Directory and onward](https://github.com/holepunchto/hello-pear-electron#4-build-deployment-directory-)
-
-## Installing Distributables
-
-Once the `pear://<key>` upgrade link is seeding the build deployment folder the CLI standalone binary can be installed peer-to-peer directly onto the system with Pear:
-
-```sh
-npx pear-install pear://<key>
-```
-
 ## Scripts
 
-- `npm start` - run the Bare CLI in dev mode (`bare bin.mjs --no-updates`)
-- `npm test` - run `brittle-bare` tests
-- `npm run lint` - run prettier check and lunte
-- `npm run format` - format repository with prettier
-- `npm run make` - auto-detect host OS/arch and run matching build target
-- `npm run make:darwin-arm64` - build standalone to `out/darwin-arm64`
-- `npm run make:darwin-x64` - build standalone to `out/darwin-x64`
-- `npm run make:linux-arm64` - build standalone to `out/linux-arm64`
-- `npm run make:linux-x64` - build standalone to `out/linux-x64`
-- `npm run make:win32-arm64` - build standalone to `out/win32-arm64`
-- `npm run make:win32-x64` - build standalone to `out/win32-x64`
+- `npm start` — run in dev mode (`bare bin.mjs --no-updates`)
+- `npm test` — run `brittle-bare` tests
+- `npm run lint` — prettier check + lunte
+- `npm run format` — format with prettier
+- `npm run make` — build a standalone binary for the current host
+- `npm run make:<platform>-<arch>` — build for a specific target (see OS support above); `bare-build`'s bundled cross-toolchains mean these can all run from a single macOS host
 
-## Project Structure
+## Deploying an update (for anyone continuing this after the hackathon)
 
-- `bin.mjs` - CLI entrypoint and runtime wiring
-- `app.js` - update resource used by the entrypoint
-- `workers/main.js` - Bare worker example
-- `scripts/make.js` - platform/arch build target selector
-- `test/index.js` - brittle-bare tests
+1. Change game code under `src/` (e.g. add a boss to `src/bosses/index.js`).
+2. `npm run make:<platform>-<arch>` only if native/runtime deps changed — pure JS/game-logic changes don't need a binary rebuild, they ship straight through staging.
+3. `pear stage pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy .` (dry-run first).
+4. Keep `pear seed pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy` running somewhere reachable — installed copies only get the update if a seeder is up.
+
+Note: only production `dependencies` (not `devDependencies` like `bare-build`, `prettier`, `lunte`, `brittle`) should be staged — see `.gitignore` and stage from a clean `npm ci --omit=dev` copy if staging from a dir that has dev tooling installed, to avoid shipping hundreds of MB of build toolchain into the P2P drive.
 
 ## Troubleshooting
 
-- `INVALID_URL: Invalid URL 'pear://<YOUR_KEY_HERE>'` means the placeholder `upgrade` link in `package.json` has not been replaced. Run `pear touch`, then put the generated `pear://...` link in `package.json`.
-- If updates do not trigger, verify `package.json` contains a valid `upgrade` Pear link and that peers are seeding the target drive.
-- If `npm run make` fails on unsupported hosts, run a specific `make:<platform>-<arch>` script or build on a supported host.
-- This template does not implement app-level data persistence; it is a minimal CLI + updater example.
+- `INVALID_URL: Invalid URL 'pear://<YOUR_KEY_HERE>'` means the `upgrade` link in `package.json` is still a placeholder. Run `pear touch` and replace it.
+- On the daemon variant (not used here), updater errors go to `<storage>/updates.log` instead of stdout.
+- If `pear install` reports `Not found: .../by-arch/<arch>/app/<name>`, the staged `by-arch` folder name must exactly match the lowercase `name` field in `package.json`, not `productName`.
+- Raw keyboard input requires a real TTY; running the binary with stdout/stdin redirected will fail with `ENOTTY`/`EINVAL` on the renderer.
 
 <!-- Reference Links -->
 
-[pear-docs]: https://docs.pears.com
-[hello-pear-worker]: https://github.com/holepunchto/hello-pear-worker
-[pear-runtime]: https://github.com/holepunchto/pear-runtime
-[Bare]: https://github.com/holepunchto/bare
-[nodejs]: https://nodejs.org
-[bare-build]: https://github.com/holepunchto/bare-build
+[hello-pear-bare]: https://github.com/holepunchto/hello-pear-bare
