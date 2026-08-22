@@ -29,7 +29,7 @@ module.exports = {
   symbol: '^',
   type: 'weapon',
   cooldownMs: 900,
-  unlimitedAmmo: false,
+  unlimitedAmmo: true,
   ammoPerPickup: 4,
   fieldPickup: true,
 

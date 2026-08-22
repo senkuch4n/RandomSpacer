@@ -8,15 +8,15 @@ const BOSS_DAMAGE = 4
 let nextEffectId = 1
 
 // Panic-button ability rather than a cycled weapon: instantly clears every
-// asteroid in range and chips the boss, consumed on activation. Limited
-// charges, picked up from the field like everything else.
+// asteroid in range and chips the boss. Unlimited charges, picked up from
+// the field like everything else.
 module.exports = {
   id: 'shockwave',
   name: 'Onda expansiva',
   symbol: 'O',
   type: 'ability',
   cooldownMs: 300,
-  unlimitedAmmo: false,
+  unlimitedAmmo: true,
   ammoPerPickup: 1,
   fieldPickup: true,
 
