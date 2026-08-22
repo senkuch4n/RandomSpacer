@@ -25,6 +25,8 @@ function colored(code, text) {
   return `${code}${text}${RESET}`
 }
 
+// One row below the arena is reserved for the experience bar.
+const XP_BAR_ROWS = 1
 // Single-width Unicode arrows read as a ship's facing direction much more
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
 const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
@@ -116,7 +118,7 @@ class TerminalRenderer {
 
   arenaSize() {
     const availWidth = Math.max(10, this.columns - PANEL_WIDTH - PANEL_GAP)
-    const availHeight = Math.max(5, this.rows - 2)
+    const availHeight = Math.max(5, this.rows - 2 - XP_BAR_ROWS)
     return {
       width: Math.min(MAX_ARENA_WIDTH, availWidth),
       height: Math.min(MAX_ARENA_HEIGHT, availHeight)
@@ -229,8 +231,12 @@ class TerminalRenderer {
     const rows = this.rows
 
     const panel = this._panelLines(world)
+    // The simulated arena (world.width/height) is capped smaller than the
+    // terminal by arenaSize() — plot against those bounds, but still fill
+    // a full-terminal-width grid so leftover content outside the arena is
+    // blanked out every frame instead of lingering.
     const arenaW = Math.min(world.width, Math.max(1, cols - PANEL_WIDTH - PANEL_GAP))
-    const arenaH = Math.min(world.height, Math.max(1, rows - 2))
+    const arenaH = Math.min(world.height, Math.max(1, rows - 2 - XP_BAR_ROWS))
 
     const contentWidth = PANEL_WIDTH + PANEL_GAP + (arenaW + 2)
     const contentHeight = Math.max(panel.length, arenaH + 2)
@@ -531,6 +537,15 @@ class TerminalRenderer {
     }
     lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
     return lines
+  }
+
+  _xpBarLine(world, cols) {
+    const xp = world.experience
+    const pct = Math.min(100, Math.floor(experienceApi.percent(xp)))
+    const suffix = `] ${pct}% Nv:${xp.level}`
+    const inner = Math.max(10, cols - 5 - suffix.length)
+    const filled = Math.max(0, Math.min(inner, Math.round((pct / 100) * inner)))
+    return `EXP [${'#'.repeat(filled)}${'.'.repeat(inner - filled)}${suffix}`.padEnd(cols)
   }
 }
 
