@@ -18,7 +18,7 @@ const PICKUP_INTERVAL_MS = [7000, 13000]
 const BOSS_INTRO_MS = 1800 // how long the "boss appears" banner stays on screen
 const BOSS_DEATH_EFFECT_MS = 700
 const LEVEL_UP_BANNER_MS = 1600
-const ITEM_CHOICE_LEVEL_INTERVAL = 2 // offer a pick every N levels
+const ITEM_CHOICE_LEVEL_INTERVAL = 1 // offer a pick every N levels
 const ITEM_CHOICE_OPTIONS = 3
 
 function steerToward(vel, targetAngle, maxTurn) {
@@ -519,9 +519,10 @@ class World {
   // A level-up triggers a brief banner (rendered in the arena, like the
   // boss intro) on top of the persistent status-line message, since it's
   // a bigger deal than most HUD status updates. Every ITEM_CHOICE_LEVEL_
-  // INTERVAL levels also opens an item choice — queued rather than shown
-  // all at once if a single XP grant crossed more than one such
-  // threshold (e.g. one boss kill jumping several levels at once).
+  // INTERVAL levels (1 = every level) also opens an item choice — queued
+  // rather than shown all at once if a single XP grant crossed more than
+  // one such threshold (e.g. one boss kill jumping several levels at
+  // once).
   _announceLevelUps(levelBefore) {
     if (this.experience.lastLevelUps > 0) {
       this.setStatus(`¡Subiste a nivel ${this.experience.level}!`)
