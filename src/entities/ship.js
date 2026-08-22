@@ -14,7 +14,6 @@ function createShip({ x, y, startLives = START_LIVES }) {
 
     lives: startLives,
     maxLives: 5,
-    score: 0,
     alive: true,
     invulnerableMs: 0,
 

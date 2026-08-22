@@ -24,6 +24,21 @@ const ITEM_CHOICE_LEVEL_INTERVAL = 1 // offer a pick every N levels
 const ITEM_CHOICE_OPTIONS = 3
 const MULTISHOT_SPREAD_RAD = 0.12 // angle between adjacent multishot bullets
 const HOMING_TURN_RATE = 4 // rad/sec, same tuning missile.js used on its own
+// Co-op doubles the firepower on screen, so the fight is biased tougher to
+// stay fair for two ships instead of one (see World's constructor).
+const COOP_WAVE_BIAS = 1
+const COOP_BOSS_HP_MUL = 1.3
+
+const IDLE_INPUT = {
+  up: false,
+  down: false,
+  left: false,
+  right: false,
+  fire: false,
+  confirm: false,
+  cycleWeapon: false,
+  activateAbility: false
+}
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -37,17 +52,37 @@ function steerToward(vel, targetAngle, maxTurn) {
 }
 
 class World {
-  constructor({ rng, width, height, difficulty }) {
+  // `playerCount` is 1 for solo, 2 for co-op (see src/net/coop.js). Ships,
+  // XP/level/score, waves and the boss are all shared world state; only
+  // per-ship things (position, lives, weapons, ammo, upgrades) live on
+  // each entry of `this.players`. `this.player` stays an alias for
+  // `this.players[0]` — solo mode and every pre-co-op call site that only
+  // ever knew about one ship still works unchanged.
+  constructor({ rng, width, height, difficulty, playerCount = 1 }) {
     this.rng = rng
     this.width = width
     this.height = height
     this.difficulty = difficultyApi.byId(difficulty)
+    if (playerCount > 1) {
+      this.difficulty = {
+        ...this.difficulty,
+        waveBias: this.difficulty.waveBias + COOP_WAVE_BIAS,
+        bossHpMul: this.difficulty.bossHpMul * COOP_BOSS_HP_MUL
+      }
+    }
 
-    this.player = shipApi.createShip({
-      x: width / 2,
-      y: height / 2,
-      startLives: this.difficulty.startLives
-    })
+    this.players = []
+    for (let i = 0; i < playerCount; i++) {
+      this.players.push(
+        shipApi.createShip({
+          x: width / 2 + (i === 0 ? -3 : 3),
+          y: height / 2,
+          startLives: this.difficulty.startLives
+        })
+      )
+    }
+    this.player = this.players[0]
+
     this.asteroids = []
     this.projectiles = []
     this.pickups = []
@@ -57,6 +92,7 @@ class World {
     this.pendingEnemies = []
     this.waveElapsedMs = 0
 
+    this.score = 0
     this.experience = experienceApi.create()
     this.levelUpMs = 0
     this.itemChoice = null
@@ -77,8 +113,57 @@ class World {
     this.height = height
   }
 
+  // Plain-JSON-safe snapshot for co-op (src/net/coop.js): the host sends
+  // this to the guest every tick to render. Ship `weapons`/`abilities`
+  // are Sets, which JSON.stringify silently turns into `{}` — everything
+  // that reads them elsewhere (e.g. terminal.js's `[...p.abilities]`)
+  // only ever iterates, which works the same over a plain array, so
+  // there's no need to reconstruct real Sets on the receiving end.
+  toSnapshot() {
+    return {
+      width: this.width,
+      height: this.height,
+      wave: this.wave,
+      score: this.score,
+      experience: this.experience,
+      levelUpMs: this.levelUpMs,
+      bossIntroMs: this.bossIntroMs,
+      boss: this.boss,
+      asteroids: this.asteroids,
+      projectiles: this.projectiles,
+      pickups: this.pickups,
+      effects: this.effects,
+      itemChoice: this.itemChoice,
+      gameOver: this.gameOver,
+      gameOverChoice: this.gameOverChoice,
+      statusMessage: this.statusMessage,
+      players: this.players.map((p) => ({
+        ...p,
+        weapons: [...p.weapons],
+        abilities: [...p.abilities]
+      }))
+    }
+  }
+
   setStatus(message) {
     this.statusMessage = message
+  }
+
+  _activePlayers() {
+    return this.players.filter((p) => p.alive)
+  }
+
+  _nearestPlayerTo(pos) {
+    let best = null
+    let bestDist = Infinity
+    for (const p of this._activePlayers()) {
+      const d = vector.distance(pos, p.pos)
+      if (d < bestDist) {
+        bestDist = d
+        best = p
+      }
+    }
+    return best
   }
 
   _rollPickupDelay() {
@@ -127,9 +212,15 @@ class World {
     this.setStatus(`Jefe: ${def.name}`)
   }
 
-  update(dtMs, input) {
+  // `inputs` is an array aligned with `this.players` (solo: a 1-element
+  // array). Shared/whole-run screens (item choice, game over) only ever
+  // read inputs[0] — in co-op that's the host's own input, so the guest
+  // watches those screens rather than driving them; see src/net/coop.js.
+  update(dtMs, inputs) {
+    const input0 = inputs[0] || IDLE_INPUT
+
     if (this.gameOver || this.victory) {
-      this._updateGameOverChoice(input)
+      this._updateGameOverChoice(input0)
       return
     }
 
@@ -137,14 +228,18 @@ class World {
     // projectile/timer updates) until the player picks one, same as a
     // classic roguelite level-up screen.
     if (this.itemChoice) {
-      this._updateItemChoice(input)
+      this._updateItemChoice(input0)
       return
     }
 
     const dt = dtMs / 1000
     if (this.bossIntroMs > 0) this.bossIntroMs = Math.max(0, this.bossIntroMs - dtMs)
     if (this.levelUpMs > 0) this.levelUpMs = Math.max(0, this.levelUpMs - dtMs)
-    this._updatePlayer(dt, dtMs, input)
+
+    for (let i = 0; i < this.players.length; i++) {
+      const p = this.players[i]
+      if (p.alive) this._updatePlayer(p, i, dt, dtMs, inputs[i] || IDLE_INPUT)
+    }
     this._updateProjectiles(dt, dtMs)
     this._updateEnemySpawns(dtMs)
     this._updateAsteroids(dt, dtMs)
@@ -154,7 +249,7 @@ class World {
     this._handleCollisions()
     this._checkProgression(dtMs)
 
-    if (!this.player.alive) {
+    if (this._activePlayers().length === 0) {
       this.gameOver = true
       this.gameOverChoice = {
         options: [
@@ -192,9 +287,7 @@ class World {
     if (confirmEdge) this.gameOverAction = choice.options[choice.selected].id
   }
 
-  _updatePlayer(dt, dtMs, input) {
-    const p = this.player
-
+  _updatePlayer(p, idx, dt, dtMs, input) {
     // Twin-stick style: WASD/arrows move the ship directly in that
     // screen direction — no separate rotate-then-thrust step. The ship
     // faces wherever it's currently moving and holds that facing (for
@@ -232,13 +325,12 @@ class World {
       }
     }
 
-    if (input.fire) this._tryFireWeapon()
+    if (input.fire) this._tryFireWeapon(p, idx)
     if (input.cycleWeapon) shipApi.cycleWeapon(p, 1)
-    if (input.activateAbility) this._tryActivateAbility()
+    if (input.activateAbility) this._tryActivateAbility(p)
   }
 
-  _tryFireWeapon() {
-    const p = this.player
+  _tryFireWeapon(p, idx) {
     const weaponId = shipApi.currentWeaponId(p)
     const def = items.byId(weaponId)
     if (!def || def.type !== 'weapon') return
@@ -247,20 +339,25 @@ class World {
     const outOfAmmo = !def.unlimitedAmmo && (p.ammo[weaponId] ?? 0) <= 0
     if (onCooldown || outOfAmmo) return
 
-    let shots = this._applyWeaponUpgrades(def, def.fire({ player: p, world: this, rng: this.rng }))
-    shots = this._applyHoming(shots)
+    let shots = this._applyWeaponUpgrades(
+      p,
+      def,
+      def.fire({ player: p, world: this, rng: this.rng })
+    )
+    shots = this._applyHoming(shots, p)
+    for (const s of shots) s.ownerPlayerIndex = idx
     this.projectiles.push(...shots)
     p.cooldowns[weaponId] = Math.round(def.cooldownMs * p.upgrades.cadenceMul)
     if (!def.unlimitedAmmo) p.ammo[weaponId] = (p.ammo[weaponId] ?? 0) - 1
   }
 
-  // Applies the player's global damage/range multipliers to every shot a
-  // weapon fires, then — only for weapons marked multishotEligible (a
-  // single focused shot, e.g. main-shot/rifle, as opposed to an
+  // Applies the firing player's global damage/range multipliers to every
+  // shot a weapon fires, then — only for weapons marked multishotEligible
+  // (a single focused shot, e.g. main-shot/rifle, as opposed to an
   // already-spread pattern like the shotgun) — expands a single shot into
-  // a small fan once the player has picked up the multishot upgrade.
-  _applyWeaponUpgrades(def, shots) {
-    const up = this.player.upgrades
+  // a small fan once that player has picked up the multishot upgrade.
+  _applyWeaponUpgrades(p, def, shots) {
+    const up = p.upgrades
     let result = shots.map((s) => ({
       ...s,
       damage: Math.max(1, Math.round(s.damage * up.damageMul)),
@@ -302,14 +399,15 @@ class World {
   }
 
   // Every player weapon self-guides toward the nearest thing worth
-  // shooting (same "closest boss/asteroid to the player" rule missile.js
-  // used to compute on its own) rather than only the missile. A shot
-  // that's already boomerang/bomb/etc keeps its own special behavior —
-  // homing just steers its heading each tick (see _updateProjectiles) on
-  // top of that, it doesn't replace it. No target on the field yet just
-  // means the shot flies straight, same fallback missile.js always had.
-  _applyHoming(shots) {
-    const target = this._findNearestTarget()
+  // shooting (same "closest boss/asteroid" rule missile.js used to
+  // compute on its own) measured from the firing ship's own position — in
+  // co-op each ship targets independently. A shot that's also boomerang/
+  // bomb/etc keeps its own special behavior — homing just steers its
+  // heading each tick (see _updateProjectiles) on top of that, it doesn't
+  // replace anything. No target on the field just means the shot flies
+  // straight, same fallback missile.js always had.
+  _applyHoming(shots, fromPlayer) {
+    const target = this._findNearestTarget(fromPlayer.pos)
     if (!target) return shots
     for (const s of shots) {
       s.homing = true
@@ -320,7 +418,7 @@ class World {
     return shots
   }
 
-  _findNearestTarget() {
+  _findNearestTarget(fromPos) {
     const candidates = []
     if (this.boss) candidates.push(this.boss)
     for (const a of this.asteroids) candidates.push(a)
@@ -328,7 +426,7 @@ class World {
     let best = null
     let bestDist = Infinity
     for (const c of candidates) {
-      const d = vector.distance(this.player.pos, c.pos)
+      const d = vector.distance(fromPos, c.pos)
       if (d < bestDist) {
         bestDist = d
         best = c
@@ -337,8 +435,7 @@ class World {
     return best
   }
 
-  _tryActivateAbility() {
-    const p = this.player
+  _tryActivateAbility(p) {
     for (const abilityId of p.abilities) {
       const def = items.byId(abilityId)
       if (!def) continue
@@ -353,6 +450,10 @@ class World {
       if (!def.unlimitedAmmo) p.ammo[abilityId] = (p.ammo[abilityId] ?? 0) - 1
       return
     }
+  }
+
+  _projectileOwnerShip(proj) {
+    return this.players[proj.ownerPlayerIndex] || this.player
   }
 
   _updateProjectiles(dt, dtMs) {
@@ -371,7 +472,8 @@ class World {
         proj.traveled += vector.length(proj.vel) * dt
         if (proj.traveled >= proj.maxRange) proj.returning = true
         if (proj.returning) {
-          const desired = Math.atan2(this.player.pos.y - proj.pos.y, this.player.pos.x - proj.pos.x)
+          const owner = this._projectileOwnerShip(proj)
+          const desired = Math.atan2(owner.pos.y - proj.pos.y, owner.pos.x - proj.pos.x)
           proj.vel = steerToward(proj.vel, desired, 6 * dt)
         }
       }
@@ -385,7 +487,9 @@ class World {
 
     this.projectiles = this.projectiles.filter((proj) => {
       if (proj.ageMs >= proj.ttlMs) return false
-      if (proj.returning && vector.distance(proj.pos, this.player.pos) < 1) return false
+      if (proj.returning && vector.distance(proj.pos, this._projectileOwnerShip(proj).pos) < 1) {
+        return false
+      }
       return true
     })
   }
@@ -407,15 +511,18 @@ class World {
   _updateBoss(dt, dtMs) {
     if (!this.boss) return
     const def = bosses.byId(this.boss.defId)
+    // Aims at whichever ship is currently closest — boss modules don't
+    // need to know or care whether there's 1 or 2 players on the field.
+    const target = this._nearestPlayerTo(this.boss.pos) || this.player
 
-    def.update({ boss: this.boss, player: this.player, world: this, rng: this.rng, dt, dtMs })
+    def.update({ boss: this.boss, player: target, world: this, rng: this.rng, dt, dtMs })
 
     this.boss.attackTimerMs -= dtMs
     if (this.boss.attackTimerMs <= 0) {
       this.boss.attackTimerMs = def.attackIntervalMs
       const spawned = def.attack({
         boss: this.boss,
-        player: this.player,
+        player: target,
         world: this,
         rng: this.rng
       })
@@ -489,12 +596,12 @@ class World {
           consumed = true
         }
       } else if (proj.owner === 'boss') {
-        if (
-          this.player.invulnerableMs <= 0 &&
-          vector.distance(proj.pos, this.player.pos) <= proj.radius + this.player.radius
-        ) {
-          shipApi.hit(this.player)
-          consumed = true
+        for (const p of this._activePlayers()) {
+          if (p.invulnerableMs <= 0 && vector.distance(proj.pos, p.pos) <= proj.radius + p.radius) {
+            shipApi.hit(p)
+            consumed = true
+            break
+          }
         }
       }
 
@@ -525,7 +632,7 @@ class World {
 
   _destroyAsteroid(asteroid) {
     if (asteroid.hp > 0) return
-    this.player.score += asteroid.tier === 'large' ? 20 : asteroid.tier === 'medium' ? 35 : 50
+    this.score += asteroid.tier === 'large' ? 20 : asteroid.tier === 'medium' ? 35 : 50
     const levelBefore = this.experience.level
     experienceApi.grantForTier(this.experience, asteroid.tier)
     this._announceLevelUps(levelBefore)
@@ -534,40 +641,43 @@ class World {
   }
 
   _collideShipWithHazards() {
-    const p = this.player
-    for (const a of this.asteroids) {
-      if (a.hp <= 0) continue
-      // Anything that just materialized this tick (split fragments from a
-      // point-blank kill, or a boss drone hatched next to a player fighting
-      // up close) gets a brief grace window so it can't land a hit the
-      // instant it appears, before the player could possibly react.
-      if (a.spawnGraceMs > 0) continue
-      if (vector.distance(p.pos, a.pos) <= p.radius + a.radius) {
-        shipApi.hit(p)
-        a.hp = 0
+    for (const p of this._activePlayers()) {
+      for (const a of this.asteroids) {
+        if (a.hp <= 0) continue
+        // Anything that just materialized this tick (split fragments from
+        // a point-blank kill, or a boss drone hatched next to a player
+        // fighting up close) gets a brief grace window so it can't land a
+        // hit the instant it appears, before the player could react.
+        if (a.spawnGraceMs > 0) continue
+        if (vector.distance(p.pos, a.pos) <= p.radius + a.radius) {
+          shipApi.hit(p)
+          a.hp = 0
+        }
       }
-    }
 
-    if (this.boss && vector.distance(p.pos, this.boss.pos) <= p.radius + this.boss.radius) {
-      shipApi.hit(p)
+      if (this.boss && vector.distance(p.pos, this.boss.pos) <= p.radius + this.boss.radius) {
+        shipApi.hit(p)
+      }
     }
   }
 
   _collideShipWithPickups() {
-    const p = this.player
     this.pickups = this.pickups.filter((pk) => {
-      if (vector.distance(p.pos, pk.pos) > p.radius + pk.radius) return true
-      this._applyItemToPlayer(items.byId(pk.itemId))
-      p.score += 5
-      return false
+      for (const p of this._activePlayers()) {
+        if (vector.distance(p.pos, pk.pos) <= p.radius + pk.radius) {
+          this._applyItemToPlayer(p, items.byId(pk.itemId))
+          this.score += 5
+          return false
+        }
+      }
+      return true
     })
   }
 
   // Shared by field pickups and level-up item choices: unlocks a weapon
   // (+ammo), grants an ability (+ammo), or runs a plain pickup's onPickup
-  // effect (e.g. life.js granting an extra life).
-  _applyItemToPlayer(def) {
-    const p = this.player
+  // effect (e.g. life.js granting an extra life) on one specific ship.
+  _applyItemToPlayer(p, def) {
     if (def.type === 'weapon') {
       shipApi.unlockWeapon(p, def.id)
       if (!def.unlimitedAmmo) p.ammo[def.id] = (p.ammo[def.id] ?? 0) + def.ammoPerPickup
@@ -579,12 +689,21 @@ class World {
     }
   }
 
+  // Level-up choices are a shared/team event (XP and level are shared
+  // world state, not per-ship) so the picked item applies to every ship
+  // at once instead of just whoever happens to be player one.
+  _applyItemToAllPlayers(def) {
+    for (const p of this.players) this._applyItemToPlayer(p, def)
+  }
+
   // Offers ITEM_CHOICE_OPTIONS unique random items from the field pool —
   // a partial Fisher-Yates shuffle so there are no duplicate options.
   _openItemChoice() {
     // Mixes new weapons/abilities/pickups with stat upgrades (excluding
     // any already maxed out — see upgrades.js's isAvailable) into one
-    // pool, so a level-up can offer either kind of reward.
+    // pool, so a level-up can offer either kind of reward. Availability
+    // is checked against player one; upgrades stay in sync across ships
+    // since _applyItemToAllPlayers grants them to everyone at once.
     const pool = [...items.FIELD_POOL, ...upgradesApi.availableFor(this.player)]
     const n = Math.min(ITEM_CHOICE_OPTIONS, pool.length)
     for (let i = 0; i < n; i++) {
@@ -604,7 +723,8 @@ class World {
   // confirm are level-triggered (held-state) so comparing against last
   // tick is what turns them into a single move/confirm per keypress.
   // Confirm is Enter specifically (not Space/fire) so picking a level-up
-  // item can't be triggered by the same key used to shoot.
+  // item can't be triggered by the same key used to shoot. In co-op only
+  // player one's input drives this (see update()'s input0).
   _updateItemChoice(input) {
     const choice = this.itemChoice
     const upEdge = input.up && !choice._prevUp
@@ -620,7 +740,7 @@ class World {
 
     if (confirmEdge) {
       const def = choice.options[choice.selected]
-      this._applyItemToPlayer(def)
+      this._applyItemToAllPlayers(def)
       this.setStatus(`Elegiste: ${def.name}`)
       this.itemChoice = null
       if (this._queuedItemChoices > 0) {
@@ -639,7 +759,7 @@ class World {
       maxRadius: this.boss.radius * 2.5,
       defId: this.boss.defId
     })
-    this.player.score += 200 * this.wave
+    this.score += 200 * this.wave
     const levelBefore = this.experience.level
     experienceApi.grant(this.experience, experienceApi.BOSS_XP_PERCENT)
     this._announceLevelUps(levelBefore)

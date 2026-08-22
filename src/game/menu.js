@@ -11,6 +11,7 @@ function createMenu() {
     screen: 'main',
     items: [
       { id: 'play', label: 'Jugar' },
+      { id: 'coop', label: 'Cooperativo' },
       { id: 'controls', label: 'Controles', screen: 'controls' },
       { id: 'quit', label: 'Salir' }
     ],
