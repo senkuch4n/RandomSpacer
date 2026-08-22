@@ -13,6 +13,12 @@ const {
 } = require('../net/coop')
 
 const TICK_MS = 40 // 25 fps — plenty for an ASCII arena, cheap to redraw
+// Hyperswarm has no built-in fallback (TURN-style relay) if direct UDP
+// holepunching fails outright — some NAT/firewall combinations just never
+// connect. Without a deadline the "buscando" screen hangs forever with no
+// feedback, which reads as broken even though it's "just" a network
+// issue. Giving up after this long at least tells the player so.
+const CONNECT_TIMEOUT_MS = 30000
 
 const EMPTY_INPUT = {
   up: false,
@@ -184,9 +190,20 @@ function startGame({ rng, onExit }) {
     const session = new CoopSession()
     let settled = false
 
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-search:timeout] no peer found within', CONNECT_TIMEOUT_MS, 'ms')
+      session.close().catch(() => {})
+      pendingStatus = 'No se encontró compañero (revisá tu red/firewall)'
+      runMenu()
+    }, CONNECT_TIMEOUT_MS)
+
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
@@ -204,6 +221,7 @@ function startGame({ rng, onExit }) {
     session.findMatch().catch((err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-search:error]', err)
       session.close().catch(() => {})
@@ -224,9 +242,20 @@ function startGame({ rng, onExit }) {
     const session = new CoopSession()
     let settled = false
 
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-host-code:timeout] no peer joined within', CONNECT_TIMEOUT_MS, 'ms')
+      session.close().catch(() => {})
+      pendingStatus = 'Nadie se conectó a ese código (revisá tu red/firewall)'
+      runMenu()
+    }, CONNECT_TIMEOUT_MS)
+
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
@@ -244,6 +273,7 @@ function startGame({ rng, onExit }) {
     session.findMatch(topicFromCode(code)).catch((err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-host-code:error]', err)
       session.close().catch(() => {})
@@ -299,9 +329,20 @@ function startGame({ rng, onExit }) {
     const session = new CoopSession()
     let settled = false
 
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-join-connecting:timeout] no host found within', CONNECT_TIMEOUT_MS, 'ms')
+      session.close().catch(() => {})
+      pendingStatus = 'No se pudo conectar con ese código (revisá tu red/firewall)'
+      runMenu()
+    }, CONNECT_TIMEOUT_MS)
+
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
@@ -319,6 +360,7 @@ function startGame({ rng, onExit }) {
     session.findMatch(topicFromCode(code)).catch((err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-join-connecting:error]', err)
       session.close().catch(() => {})
