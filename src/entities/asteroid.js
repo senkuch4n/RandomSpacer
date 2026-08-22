@@ -11,7 +11,7 @@ const TIERS = {
 
 let nextId = 1
 
-function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle }) {
+function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle, spawnGraceMs = 0 }) {
   const def = TIERS[tier]
   const dir = angle ?? rng.angle()
   const mag = speed ?? rng.range(1, 3)
@@ -25,7 +25,8 @@ function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle }) {
     radius: def.radius,
     hp: def.hp,
     symbol: def.symbol,
-    spin: rng.range(-1, 1)
+    spin: rng.range(-1, 1),
+    spawnGraceMs
   }
 }
 
@@ -55,6 +56,10 @@ function spawnAtEdge(rng, width, height, target, tier = 'large') {
   return spawnAsteroid(rng, { x, y, tier, angle: aim })
 }
 
+// ms a freshly split fragment ignores ship contact — long enough that a
+// point-blank bomb kill can't tag the player with its own shrapnel.
+const FRAGMENT_SPAWN_GRACE_MS = 300
+
 // On destruction, large/medium asteroids break into smaller ones.
 // Returns an array of newly spawned fragments (possibly empty).
 function split(rng, asteroid) {
@@ -68,7 +73,8 @@ function split(rng, asteroid) {
         x: asteroid.pos.x,
         y: asteroid.pos.y,
         tier: def.splitInto,
-        speed: rng.range(2, 4)
+        speed: rng.range(2, 4),
+        spawnGraceMs: FRAGMENT_SPAWN_GRACE_MS
       })
     )
   }

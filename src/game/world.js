@@ -103,7 +103,7 @@ class World {
     this._updatePlayer(dt, dtMs, input)
     this._updateProjectiles(dt, dtMs)
     this._updateEnemySpawns(dtMs)
-    this._updateAsteroids(dt)
+    this._updateAsteroids(dt, dtMs)
     this._updateBoss(dt, dtMs)
     this._updatePickups(dtMs)
     this._updateEffects(dtMs)
@@ -234,9 +234,10 @@ class World {
     return null
   }
 
-  _updateAsteroids(dt) {
+  _updateAsteroids(dt, dtMs) {
     for (const a of this.asteroids) {
       a.pos = vector.wrap(vector.add(a.pos, vector.scale(a.vel, dt)), this.width, this.height)
+      if (a.spawnGraceMs > 0) a.spawnGraceMs = Math.max(0, a.spawnGraceMs - dtMs)
     }
   }
 
@@ -370,6 +371,10 @@ class World {
     const p = this.player
     for (const a of this.asteroids) {
       if (a.hp <= 0) continue
+      // Fragments from a kill made this same tick (e.g. a bomb popped an
+      // asteroid right next to the ship) get a brief grace window so the
+      // player's own weapon can't tag them with the shrapnel.
+      if (a.spawnGraceMs > 0) continue
       if (vector.distance(p.pos, a.pos) <= p.radius + a.radius) {
         shipApi.hit(p)
         a.hp = 0

@@ -1,6 +1,6 @@
 'use strict'
 
-const START_LIVES = 2
+const START_LIVES = 3
 const INVULNERABLE_MS_ON_HIT = 1500
 
 function createShip({ x, y }) {
