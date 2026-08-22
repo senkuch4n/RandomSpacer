@@ -2,6 +2,7 @@
 
 const tty = require('bare-tty')
 const items = require('../items')
+const pkg = require('../../package.json')
 
 const HUD_ROWS = 3
 // Single-width Unicode arrows read as a ship's facing direction much more
@@ -160,7 +161,7 @@ class TerminalRenderer {
       .join(' ')
 
     const status = world.statusMessage ? ` | ${world.statusMessage}` : ''
-    return `[A/D o flechas: girar] [W: impulso] [espacio: disparar] [E: cambiar arma] [X: ${abilities || 'sin habilidad'}]${status}`
+    return `[A/D o flechas: girar] [W: impulso] [espacio: disparar] [E: cambiar arma] [X: ${abilities || 'sin habilidad'}] v${pkg.version}${status}`
   }
 }
 
