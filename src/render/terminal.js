@@ -5,9 +5,27 @@ const items = require('../items')
 const experienceApi = require('../game/experience')
 const pkg = require('../../package.json')
 
-// Top block: two info lines + separator. One more row below the arena is
-// reserved for the experience bar.
-const HUD_ROWS = 3
+const RESET = '\x1b[0m'
+const BOLD = '\x1b[1m'
+const DIM = '\x1b[2m'
+const C = {
+  cyan: '\x1b[36m',
+  brightCyan: '\x1b[96m',
+  yellow: '\x1b[33m',
+  brightYellow: '\x1b[93m',
+  red: '\x1b[31m',
+  brightRed: '\x1b[91m',
+  brightMagenta: '\x1b[95m',
+  brightGreen: '\x1b[92m',
+  white: '\x1b[37m',
+  gray: '\x1b[90m'
+}
+
+function colored(code, text) {
+  return `${code}${text}${RESET}`
+}
+
+// One row below the arena is reserved for the experience bar.
 const XP_BAR_ROWS = 1
 // Single-width Unicode arrows read as a ship's facing direction much more
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
@@ -68,8 +86,8 @@ class TerminalRenderer {
   }
 
   arenaSize() {
-    const availWidth = Math.max(10, this.columns)
-    const availHeight = Math.max(5, this.rows - HUD_ROWS - XP_BAR_ROWS)
+    const availWidth = Math.max(10, this.columns - PANEL_WIDTH - PANEL_GAP)
+    const availHeight = Math.max(5, this.rows - 2 - XP_BAR_ROWS)
     return {
       width: Math.min(MAX_ARENA_WIDTH, availWidth),
       height: Math.min(MAX_ARENA_HEIGHT, availHeight)
@@ -152,13 +170,30 @@ class TerminalRenderer {
 
   render(world) {
     const cols = this.columns
-    const totalRows = Math.max(5, this.rows - HUD_ROWS - XP_BAR_ROWS)
+    const rows = this.rows
+
+    const panel = this._panelLines(world)
     // The simulated arena (world.width/height) is capped smaller than the
     // terminal by arenaSize() — plot against those bounds, but still fill
     // a full-terminal-width grid so leftover content outside the arena is
     // blanked out every frame instead of lingering.
-    const arenaW = Math.min(world.width, cols)
-    const arenaH = Math.min(world.height, totalRows)
+    const arenaW = Math.min(world.width, Math.max(1, cols - PANEL_WIDTH - PANEL_GAP))
+    const arenaH = Math.min(world.height, Math.max(1, rows - 2 - XP_BAR_ROWS))
+
+    const contentWidth = PANEL_WIDTH + PANEL_GAP + (arenaW + 2)
+    const contentHeight = Math.max(panel.length, arenaH + 2)
+    const left = Math.max(0, Math.floor((cols - contentWidth) / 2))
+    const top = Math.max(0, Math.floor((rows - contentHeight) / 2))
+
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    for (let r = 0; r < panel.length && top + r < rows; r++) {
+      const { text, color } = panel[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
 
     const arenaLeft = left + PANEL_WIDTH + PANEL_GAP
     const arenaTop = top
@@ -223,21 +258,27 @@ class TerminalRenderer {
 
     const p = world.player
     const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
-    if (p.alive && !blinking) plot(grid, arenaW, arenaH, p.pos.x, p.pos.y, shipGlyph(p.angle))
+    if (p.alive && !blinking) plot(p.pos.x, p.pos.y, colored(SHIP_COLOR, shipGlyph(p.angle)))
 
-    const lines = [this._hudLine1(world), this._hudLine2(world), '-'.repeat(cols)]
-    for (const row of grid) lines.push(row.join(''))
-    lines.push(this._xpBarLine(world, cols))
+    // Experience bar spans the full terminal width on the bottom row.
+    const xpRow = rows - 1
+    if (xpRow >= 0 && xpRow < rows) {
+      const xpLine = this._xpBarLine(world, cols)
+      for (let c = 0; c < cols; c++) grid[xpRow][c] = xpLine[c]
+    }
 
     if (world.gameOver) {
       const msg = ` GAME OVER — puntaje: ${world.player.score} — Q para salir `
       const row = arenaTop + 1 + Math.floor(arenaH / 2)
       const col = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - msg.length) / 2))
       if (row >= 0 && row < rows) {
-        const colored_ = colored(BOLD + C.brightRed, msg)
+        // One visible character per grid cell, same as every other drawn
+        // string — stuffing the whole message into a single cell made the
+        // row emit more visible columns than the terminal has, wrapping
+        // and scrolling the screen every frame after game over.
         for (let i = 0; i < msg.length; i++) {
           const c = col + i
-          if (c >= 0 && c < cols) grid[row][c] = i === 0 ? colored_ : ''
+          if (c >= 0 && c < cols) grid[row][c] = colored(BOLD + C.brightRed, msg[i])
         }
       }
     }
