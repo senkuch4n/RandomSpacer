@@ -19,6 +19,11 @@ const TICK_MS = 40 // 25 fps — plenty for an ASCII arena, cheap to redraw
 // feedback, which reads as broken even though it's "just" a network
 // issue. Giving up after this long at least tells the player so.
 const CONNECT_TIMEOUT_MS = 30000
+const DEBUG_SNAPSHOT_TICKS = Math.round(5000 / TICK_MS) // every ~5s while waiting to connect
+
+function armCoopDebug(session, label) {
+  session.onDebug = (message) => console.error(`[coop-debug:${label}]`, message)
+}
 
 const EMPTY_INPUT = {
   up: false,
@@ -188,7 +193,9 @@ function startGame({ rng, onExit }) {
       pendingStatus = message
     }
     const session = new CoopSession()
+    armCoopDebug(session, 'auto')
     let settled = false
+    let tick = 0
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
@@ -212,6 +219,10 @@ function startGame({ rng, onExit }) {
     timer = setInterval(() => {
       try {
         renderer.renderSearching()
+        tick++
+        if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
+          console.error('[coop-debug:auto]', session.debugSnapshot())
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-search:error]', err)
@@ -240,7 +251,9 @@ function startGame({ rng, onExit }) {
     }
     const code = generateCode()
     const session = new CoopSession()
+    armCoopDebug(session, 'host-code')
     let settled = false
+    let tick = 0
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
@@ -264,6 +277,10 @@ function startGame({ rng, onExit }) {
     timer = setInterval(() => {
       try {
         renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+        tick++
+        if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
+          console.error('[coop-debug:host-code]', session.debugSnapshot())
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-host-code:error]', err)
@@ -327,7 +344,9 @@ function startGame({ rng, onExit }) {
 
   function runCoopJoinConnecting(difficulty, code) {
     const session = new CoopSession()
+    armCoopDebug(session, 'join-code')
     let settled = false
+    let tick = 0
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
@@ -351,6 +370,10 @@ function startGame({ rng, onExit }) {
     timer = setInterval(() => {
       try {
         renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+        tick++
+        if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
+          console.error('[coop-debug:join-code]', session.debugSnapshot())
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-join-connecting:error]', err)
