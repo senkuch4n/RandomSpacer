@@ -171,10 +171,58 @@ class TerminalRenderer {
     pushCentered(`Buscando compañero${dots}`, C.brightCyan)
     if (status) {
       push('', null)
-      pushCentered(status, DIM + C.gray)
+      pushCentered(status, BOLD + C.brightYellow)
     }
     push('', null)
     pushCentered('Q para cancelar', DIM + C.gray)
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+
+    const top = Math.max(0, Math.floor((rows - lines.length) / 2))
+    const left = Math.max(0, Math.floor((cols - width) / 2))
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+    for (let r = 0; r < lines.length && top + r < rows; r++) {
+      const { text, color } = lines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  // The "Unirse con código" text-entry screen. `typed` is
+  // InputManager#textBuffer; `error` is an optional one-line validation
+  // message (e.g. wrong length) shown in place of the hint.
+  renderCoopJoin(typed, error) {
+    const cols = this.columns
+    const rows = this.rows
+    const width = Math.min(46, Math.max(30, cols - 4))
+    const inner = width - 2
+    const cursorOn = Math.floor(Date.now() / 400) % 2 === 0
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('✦ RANDOMSPACE ✦', BOLD + C.brightCyan)
+    push('', null)
+    pushCentered('Unirse con código', BOLD + C.brightMagenta)
+    push('', null)
+    const shown = (typed.toUpperCase() + (cursorOn ? '_' : ' ')).padEnd(9)
+    pushCentered(shown, BOLD + C.brightYellow)
+    push('', null)
+    if (error) {
+      pushCentered(error, BOLD + C.brightRed)
+    } else {
+      pushCentered('Enter confirma · Backspace borra', DIM + C.gray)
+    }
+    pushCentered('Esc cancela', DIM + C.gray)
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
     for (const { text, color } of body) {
@@ -221,6 +269,18 @@ class TerminalRenderer {
       push('  Q        salir', DIM + C.gray)
       push('', null)
       pushCentered('Espacio para volver', C.brightCyan)
+    } else if (menu.screen === 'coop') {
+      pushCentered('Cooperativo', BOLD + C.brightMagenta)
+      push('', null)
+      for (let i = 0; i < menu.coopItems.length; i++) {
+        const item = menu.coopItems[i]
+        const isSelected = i === menu.coopSelected
+        const pointer = isSelected && blinkOn ? '▶ ' : '  '
+        push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
+      }
+      push('', null)
+      pushCentered('W/S elegir · Espacio confirma', DIM + C.gray)
+      pushCentered('A volver', DIM + C.gray)
     } else {
       for (let i = 0; i < menu.items.length; i++) {
         const item = menu.items[i]

@@ -22,6 +22,27 @@ class InputManager {
     this._quit = false
     this._pendingEscape = ''
     this.onQuit = null
+
+    // Free-text capture for the co-op "join with code" screen — while
+    // active, every byte goes through _onTextChar instead of the normal
+    // key bindings (so e.g. 'q' types a letter rather than quitting).
+    this._textMode = false
+    this._textBuffer = ''
+    this.onTextSubmit = null // (text) => void, Enter pressed
+    this.onTextCancel = null // () => void, Esc pressed
+  }
+
+  startTextInput(initial = '') {
+    this._textMode = true
+    this._textBuffer = initial
+  }
+
+  stopTextInput() {
+    this._textMode = false
+  }
+
+  get textBuffer() {
+    return this._textBuffer
   }
 
   start() {
@@ -58,6 +79,11 @@ class InputManager {
     for (let i = 0; i < str.length; i++) {
       const ch = str[i]
 
+      if (this._textMode) {
+        this._onTextChar(ch)
+        continue
+      }
+
       if (this._pendingEscape) {
         this._pendingEscape += ch
         if (this._pendingEscape === '\x1b[') continue
@@ -91,6 +117,33 @@ class InputManager {
       else if (ch === '\r' || ch === '\n') this._mark('confirm')
       else if (lower === 'e' || ch === '\t') this._cyclePresses += 1
       else if (lower === 'x') this._mark('ability')
+    }
+  }
+
+  // Ctrl+C still quits even mid-entry (a safety valve, same as always).
+  // Esc cancels; Enter submits; backspace edits; anything else printable
+  // gets appended (capped so a stuck/pasted key can't grow it forever —
+  // codes are 8 chars, this just gives a little slack for typos/dashes).
+  _onTextChar(ch) {
+    if (ch === '\x03') {
+      this._quit = true
+      if (this.onQuit) this.onQuit()
+      return
+    }
+    if (ch === '\x1b') {
+      if (this.onTextCancel) this.onTextCancel()
+      return
+    }
+    if (ch === '\r' || ch === '\n') {
+      if (this.onTextSubmit) this.onTextSubmit(this._textBuffer)
+      return
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      this._textBuffer = this._textBuffer.slice(0, -1)
+      return
+    }
+    if (ch >= ' ' && ch <= '~' && this._textBuffer.length < 16) {
+      this._textBuffer += ch
     }
   }
 
