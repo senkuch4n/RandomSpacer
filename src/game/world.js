@@ -5,6 +5,7 @@ const shipApi = require('../entities/ship')
 const asteroidApi = require('../entities/asteroid')
 const { spawnPickup } = require('../entities/pickup')
 const { spawnBoss } = require('../entities/boss')
+const enemyGenerator = require('./enemyGenerator')
 const items = require('../items')
 const bosses = require('../bosses')
 
@@ -13,7 +14,6 @@ const THRUST_ACCEL = 14
 const DRAG = 0.985
 const MAX_SPEED = 20
 const PICKUP_INTERVAL_MS = [7000, 13000]
-const ASTEROIDS_BASE_COUNT = 3
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -38,6 +38,8 @@ class World {
     this.pickups = []
     this.effects = []
     this.boss = null
+    this.pendingEnemies = []
+    this.waveElapsedMs = 0
 
     this.wave = 1
     this.gameOver = false
@@ -61,17 +63,32 @@ class World {
     return this.rng.range(PICKUP_INTERVAL_MS[0], PICKUP_INTERVAL_MS[1])
   }
 
+  // Rolls a procedural wave plan and queues it; enemies pour in over time
+  // as _updateEnemySpawns drains the queue.
   _spawnWave() {
-    const count = ASTEROIDS_BASE_COUNT + this.wave - 1
-    for (let i = 0; i < count; i++) {
-      this.asteroids.push(
-        asteroidApi.spawnAtEdge(this.rng, this.width, this.height, this.player.pos)
-      )
+    const plan = enemyGenerator.createWavePlan({
+      rng: this.rng,
+      width: this.width,
+      height: this.height,
+      wave: this.wave
+    })
+    this.pendingEnemies = plan.entries
+    this.waveElapsedMs = 0
+    this.setStatus(`Oleada ${this.wave}: ${plan.count} enemigos (${plan.formation})`)
+  }
+
+  _updateEnemySpawns(dtMs) {
+    if (this.pendingEnemies.length === 0) return
+
+    this.waveElapsedMs += dtMs
+    while (this.pendingEnemies.length > 0 && this.pendingEnemies[0].delayMs <= this.waveElapsedMs) {
+      const spec = this.pendingEnemies.shift()
+      this.asteroids.push(asteroidApi.spawnAsteroid(this.rng, spec))
     }
   }
 
   _spawnBoss() {
-    const def = bosses.forWave(this.wave)
+    const def = bosses.forWave(this.wave, this.rng)
     this.boss = spawnBoss(def, {
       x: this.width / 2,
       y: 4,
@@ -86,6 +103,7 @@ class World {
     const dt = dtMs / 1000
     this._updatePlayer(dt, dtMs, input)
     this._updateProjectiles(dt, dtMs)
+    this._updateEnemySpawns(dtMs)
     this._updateAsteroids(dt)
     this._updateBoss(dt, dtMs)
     this._updatePickups(dtMs)
@@ -385,7 +403,9 @@ class World {
   }
 
   _checkProgression(dtMs) {
-    if (!this.boss && this.asteroids.length === 0) this._spawnBoss()
+    if (!this.boss && this.pendingEnemies.length === 0 && this.asteroids.length === 0) {
+      this._spawnBoss()
+    }
   }
 }
 
