@@ -10,7 +10,6 @@ function createMenu() {
     items: [
       { id: 'play', label: 'Jugar' },
       { id: 'controls', label: 'Controles', screen: 'controls' },
-      { id: 'credits', label: 'Créditos', screen: 'credits' },
       { id: 'quit', label: 'Salir' }
     ],
     selected: 0,
@@ -20,7 +19,8 @@ function createMenu() {
 
     // Returns 'play' or 'quit' when the player confirms that action,
     // otherwise null (including while just browsing a sub-screen like
-    // Controles/Créditos).
+    // Controles). Credits are shown as a permanent footer on the main
+    // screen instead of a sub-screen — see terminal.js renderMenu.
     update(input) {
       const upEdge = input.up && !this._prevUp
       const downEdge = input.down && !this._prevDown

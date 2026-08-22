@@ -159,14 +159,6 @@ class TerminalRenderer {
       push('  Q        salir', DIM + C.gray)
       push('', null)
       pushCentered('Espacio para volver', C.brightCyan)
-    } else if (menu.screen === 'credits') {
-      pushCentered('Aleph Hackathon', BOLD + C.brightGreen)
-      pushCentered('Pears Track', DIM + C.gray)
-      push('', null)
-      pushCentered('Joel Serrudo', C.brightYellow)
-      pushCentered('Lautaro Aponte', C.brightYellow)
-      push('', null)
-      pushCentered('Espacio para volver', C.brightCyan)
     } else {
       for (let i = 0; i < menu.items.length; i++) {
         const item = menu.items[i]
@@ -176,6 +168,9 @@ class TerminalRenderer {
       }
       push('', null)
       pushCentered('W/S mover · Espacio elegir · Q salir', DIM + C.gray)
+      push('', null)
+      pushCentered('Aleph Hackathon — Pears Track', DIM + C.brightGreen)
+      pushCentered('Joel Serrudo · Lautaro Aponte', DIM + C.gray)
     }
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
