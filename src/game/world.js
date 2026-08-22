@@ -23,6 +23,7 @@ const LEVEL_UP_BANNER_MS = 1600
 const ITEM_CHOICE_LEVEL_INTERVAL = 1 // offer a pick every N levels
 const ITEM_CHOICE_OPTIONS = 3
 const MULTISHOT_SPREAD_RAD = 0.12 // angle between adjacent multishot bullets
+const HOMING_TURN_RATE = 4 // rad/sec, same tuning missile.js used on its own
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -246,10 +247,8 @@ class World {
     const outOfAmmo = !def.unlimitedAmmo && (p.ammo[weaponId] ?? 0) <= 0
     if (onCooldown || outOfAmmo) return
 
-    const shots = this._applyWeaponUpgrades(
-      def,
-      def.fire({ player: p, world: this, rng: this.rng })
-    )
+    let shots = this._applyWeaponUpgrades(def, def.fire({ player: p, world: this, rng: this.rng }))
+    shots = this._applyHoming(shots)
     this.projectiles.push(...shots)
     p.cooldowns[weaponId] = Math.round(def.cooldownMs * p.upgrades.cadenceMul)
     if (!def.unlimitedAmmo) p.ammo[weaponId] = (p.ammo[weaponId] ?? 0) - 1
@@ -300,6 +299,42 @@ class World {
       )
     }
     return shots
+  }
+
+  // Every player weapon self-guides toward the nearest thing worth
+  // shooting (same "closest boss/asteroid to the player" rule missile.js
+  // used to compute on its own) rather than only the missile. A shot
+  // that's already boomerang/bomb/etc keeps its own special behavior —
+  // homing just steers its heading each tick (see _updateProjectiles) on
+  // top of that, it doesn't replace it. No target on the field yet just
+  // means the shot flies straight, same fallback missile.js always had.
+  _applyHoming(shots) {
+    const target = this._findNearestTarget()
+    if (!target) return shots
+    for (const s of shots) {
+      s.homing = true
+      s.homingTargetId = target.id
+      s.homingTargetKind = target.kind
+      if (!s.turnRate) s.turnRate = HOMING_TURN_RATE
+    }
+    return shots
+  }
+
+  _findNearestTarget() {
+    const candidates = []
+    if (this.boss) candidates.push(this.boss)
+    for (const a of this.asteroids) candidates.push(a)
+
+    let best = null
+    let bestDist = Infinity
+    for (const c of candidates) {
+      const d = vector.distance(this.player.pos, c.pos)
+      if (d < bestDist) {
+        bestDist = d
+        best = c
+      }
+    }
+    return best
   }
 
   _tryActivateAbility() {
