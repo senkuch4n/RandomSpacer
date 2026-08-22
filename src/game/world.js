@@ -6,6 +6,7 @@ const asteroidApi = require('../entities/asteroid')
 const { spawnPickup } = require('../entities/pickup')
 const { spawnBoss } = require('../entities/boss')
 const enemyGenerator = require('./enemyGenerator')
+const experienceApi = require('./experience')
 const items = require('../items')
 const bosses = require('../bosses')
 
@@ -41,6 +42,7 @@ class World {
     this.pendingEnemies = []
     this.waveElapsedMs = 0
 
+    this.experience = experienceApi.create()
     this.wave = 1
     this.gameOver = false
     this.victory = false
@@ -70,7 +72,8 @@ class World {
       rng: this.rng,
       width: this.width,
       height: this.height,
-      wave: this.wave
+      wave: this.wave,
+      matchStart: this.wave === 1
     })
     this.pendingEnemies = plan.entries
     this.waveElapsedMs = 0
@@ -355,6 +358,8 @@ class World {
   _destroyAsteroid(asteroid) {
     if (asteroid.hp > 0) return
     this.player.score += asteroid.tier === 'large' ? 20 : asteroid.tier === 'medium' ? 35 : 50
+    experienceApi.grantForTier(this.experience, asteroid.tier)
+    this._announceLevelUps()
     const fragments = asteroidApi.split(this.rng, asteroid)
     this.asteroids.push(...fragments)
   }
@@ -396,10 +401,19 @@ class World {
 
   _onBossDefeated() {
     this.player.score += 200 * this.wave
+    experienceApi.grant(this.experience, experienceApi.BOSS_XP_PERCENT)
+    this._announceLevelUps()
     this.setStatus(`${this.boss.name} derrotado`)
     this.boss = null
     this.wave += 1
     this._spawnWave()
+  }
+
+  _announceLevelUps() {
+    if (this.experience.lastLevelUps > 0) {
+      this.setStatus(`¡Subiste a nivel ${this.experience.level}!`)
+      this.experience.lastLevelUps = 0
+    }
   }
 
   _checkProgression(dtMs) {

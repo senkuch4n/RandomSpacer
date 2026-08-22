@@ -2,6 +2,7 @@ const { test } = require('brittle')
 const { createCongruential } = require('../src/engine/congruential.js')
 const { createRng } = require('../src/engine/rng.js')
 const enemyGenerator = require('../src/game/enemyGenerator.js')
+const experience = require('../src/game/experience.js')
 
 test('congruential yields floats in [0, 1)', (t) => {
   const next = createCongruential(12345)
@@ -131,6 +132,75 @@ test('enemy generator: entries are valid and sorted by delay', (t) => {
       t.fail(`entry out of bounds: ${JSON.stringify(e)}`)
       return
     }
+  }
+  t.pass()
+})
+
+test('experience: first level costs 100, second 225 total', (t) => {
+  const xp = experience.create()
+  t.is(xp.level, 0)
+  t.is(experience.requirement(xp), 100)
+
+  while (xp.level < 1) experience.grantForTier(xp, 'large')
+  t.is(xp.level, 1)
+  t.is(experience.percent(xp) < 100, true)
+
+  const reqLevel2 = experience.requirement(xp)
+  t.is(reqLevel2, 125)
+})
+
+test('experience: tiers grant 10%, 5% and 2% of the bar', (t) => {
+  const xp = experience.create()
+  experience.grantForTier(xp, 'small')
+  t.is(Math.round(experience.percent(xp)), 2)
+
+  const xp2 = experience.create()
+  experience.grantForTier(xp2, 'medium')
+  t.is(Math.round(experience.percent(xp2)), 5)
+
+  const xp3 = experience.create()
+  experience.grantForTier(xp3, 'large')
+  t.is(Math.round(experience.percent(xp3)), 10)
+})
+
+test('experience: level up carries overflow into a bigger bar', (t) => {
+  const xp = experience.create()
+  for (let i = 0; i < 10; i++) experience.grantForTier(xp, 'large')
+  t.is(xp.level, 1)
+  t.is(xp.lastLevelUps, 1)
+  t.is(Math.round(experience.percent(xp)), 0)
+
+  const before = experience.percent(xp)
+  experience.grantForTier(xp, 'medium')
+  experience.grantForTier(xp, 'small')
+  t.is(experience.percent(xp) > before, true)
+})
+
+test('enemy generator: matchStart holds enemies back and drops them at the edges', (t) => {
+  const plan = enemyGenerator.createWavePlan({
+    rng: createRng({ source: createCongruential(555) }),
+    ...ARENA,
+    wave: 1,
+    matchStart: true
+  })
+
+  t.is(plan.entries[0].delayMs >= 1000, true)
+
+  for (const e of plan.entries) {
+    const onEdge = e.x === 0 || e.x === ARENA.width || e.y === 0 || e.y === ARENA.height
+    if (!onEdge) {
+      t.fail(`entry not on an edge: ${JSON.stringify(e)}`)
+      return
+    }
+  }
+
+  let lastDelay = -1
+  for (const e of plan.entries) {
+    if (e.delayMs < lastDelay) {
+      t.fail('delays not ascending')
+      return
+    }
+    lastDelay = e.delayMs
   }
   t.pass()
 })

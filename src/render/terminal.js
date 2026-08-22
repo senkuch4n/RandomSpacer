@@ -2,9 +2,13 @@
 
 const tty = require('bare-tty')
 const items = require('../items')
+const experienceApi = require('../game/experience')
 const pkg = require('../../package.json')
 
+// Top block: two info lines + separator. One more row below the arena is
+// reserved for the experience bar.
 const HUD_ROWS = 3
+const XP_BAR_ROWS = 1
 // Single-width Unicode arrows read as a ship's facing direction much more
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
 const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
@@ -52,7 +56,7 @@ class TerminalRenderer {
 
   arenaSize() {
     const availWidth = Math.max(10, this.columns)
-    const availHeight = Math.max(5, this.rows - HUD_ROWS)
+    const availHeight = Math.max(5, this.rows - HUD_ROWS - XP_BAR_ROWS)
     return {
       width: Math.min(MAX_ARENA_WIDTH, availWidth),
       height: Math.min(MAX_ARENA_HEIGHT, availHeight)
@@ -77,7 +81,7 @@ class TerminalRenderer {
 
   render(world) {
     const cols = this.columns
-    const totalRows = Math.max(5, this.rows - HUD_ROWS)
+    const totalRows = Math.max(5, this.rows - HUD_ROWS - XP_BAR_ROWS)
     // The simulated arena (world.width/height) is capped smaller than the
     // terminal by arenaSize() — plot against those bounds, but still fill
     // a full-terminal-width grid so leftover content outside the arena is
@@ -123,6 +127,7 @@ class TerminalRenderer {
 
     const lines = [this._hudLine1(world), this._hudLine2(world), '-'.repeat(cols)]
     for (const row of grid) lines.push(row.join(''))
+    lines.push(this._xpBarLine(world, cols))
 
     if (world.gameOver) {
       const msg = ` GAME OVER — puntaje: ${world.player.score} — Q para salir `
@@ -166,6 +171,15 @@ class TerminalRenderer {
 
     const status = world.statusMessage ? ` | ${world.statusMessage}` : ''
     return `[A/D o flechas: girar] [W: impulso] [espacio: disparar] [E: cambiar arma] [X: ${abilities || 'sin habilidad'}] v${pkg.version}${status}`
+  }
+
+  _xpBarLine(world, cols) {
+    const xp = world.experience
+    const pct = Math.min(100, Math.floor(experienceApi.percent(xp)))
+    const suffix = `] ${pct}% Nv:${xp.level}`
+    const inner = Math.max(10, cols - 5 - suffix.length)
+    const filled = Math.max(0, Math.min(inner, Math.round((pct / 100) * inner)))
+    return `EXP [${'#'.repeat(filled)}${'.'.repeat(inner - filled)}${suffix}`.padEnd(cols)
   }
 }
 
