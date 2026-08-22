@@ -48,7 +48,8 @@ const EMPTY_INPUT = {
   fire: false,
   confirm: false,
   cycleWeapon: false,
-  activateAbility: false
+  activateAbility: false,
+  toggleRanking: false
 }
 
 // Wires the World simulation to a terminal renderer + raw keyboard input
@@ -78,6 +79,13 @@ function startGame({ rng, onExit, storageDir }) {
       wave: world.wave,
       date: new Date().toISOString().slice(0, 10)
     })
+  }
+
+  // Reads leaderboardEntries fresh each call (rather than snapshotting it
+  // once) so a co-op peer's gossiped entries — merged in mid-match via
+  // wireLeaderboardSync — show up immediately next tick.
+  function topEntriesFor(mode, limit) {
+    return leaderboardApi.topEntries(leaderboardEntries, mode, limit)
   }
 
   // Runs once right when a co-op connection is established (not on every
@@ -189,6 +197,7 @@ function startGame({ rng, onExit, storageDir }) {
 
     let lastTick = Date.now()
     let recorded = false // guards against re-recording every tick spent on the game-over screen
+    let showRanking = false // R toggles a full-screen ranking view, pausing the sim while it's open
 
     renderer.onResize(() => {
       const size = renderer.arenaSize()
@@ -205,8 +214,16 @@ function startGame({ rng, onExit, storageDir }) {
       // until the user blind-types `reset`. Restore the terminal first,
       // then surface the error.
       try {
-        world.update(dtMs, [input.snapshot()])
-        renderer.render(world)
+        const inp = input.snapshot()
+        if (inp.toggleRanking) showRanking = !showRanking
+
+        if (showRanking) {
+          renderer.renderRankingOverlay(topEntriesFor('solo', 10), 'solo')
+          return
+        }
+
+        world.update(dtMs, [inp])
+        renderer.render(world, 0, topEntriesFor('solo', 3))
 
         if (world.gameOver && !recorded) {
           recorded = true
@@ -474,6 +491,7 @@ function startGame({ rng, onExit, storageDir }) {
 
     let lastTick = Date.now()
     let recorded = false
+    let showRanking = false // pressing R here pauses the sim for both peers — see runGame's comment
     renderer.onResize(() => {
       const size = renderer.arenaSize()
       world.resize(size.width, size.height)
@@ -485,8 +503,17 @@ function startGame({ rng, onExit, storageDir }) {
       lastTick = now
 
       try {
-        world.update(dtMs, [input.snapshot(), remoteInput])
-        renderer.render(world, 0)
+        const inp = input.snapshot()
+        if (inp.toggleRanking) showRanking = !showRanking
+
+        if (showRanking) {
+          renderer.renderRankingOverlay(topEntriesFor('coop', 10), 'coop')
+          session.sendState(world.toSnapshot())
+          return
+        }
+
+        world.update(dtMs, [inp, remoteInput])
+        renderer.render(world, 0, topEntriesFor('coop', 3))
         session.sendState(world.toSnapshot())
 
         if (world.gameOver && !recorded) {
@@ -524,6 +551,7 @@ function startGame({ rng, onExit, storageDir }) {
     // rather than a one-shot flag, or only the very first game over of
     // the whole connection would ever get recorded.
     let wasGameOver = false
+    let showRanking = false
     session.onState = (worldSnapshot) => {
       latestState = worldSnapshot
     }
@@ -536,9 +564,22 @@ function startGame({ rng, onExit, storageDir }) {
 
     timer = setInterval(() => {
       try {
-        session.sendInput(input.snapshot())
+        const inp = input.snapshot()
+        if (inp.toggleRanking) showRanking = !showRanking
+
+        // The guest doesn't own the simulation, so opening the ranking
+        // here can't pause anything — it just stops sending real movement
+        // (an idle ship is still safer than one drifting unattended) and
+        // shows a local overlay instead of the host's stream.
+        session.sendInput(showRanking ? EMPTY_INPUT : inp)
+
+        if (showRanking) {
+          renderer.renderRankingOverlay(topEntriesFor('coop', 10), 'coop')
+          return
+        }
+
         if (latestState) {
-          renderer.render(latestState, 1)
+          renderer.render(latestState, 1, topEntriesFor('coop', 3))
           if (latestState.gameOver && !wasGameOver) recordScore(latestState, 'coop')
           wasGameOver = latestState.gameOver
         }

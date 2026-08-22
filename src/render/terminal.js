@@ -301,6 +301,7 @@ class TerminalRenderer {
       push('  Espacio  disparar', DIM + C.gray)
       push('  E        cambiar arma', DIM + C.gray)
       push('  X        habilidad', DIM + C.gray)
+      push('  R        ranking', DIM + C.gray)
       push('  Q        salir', DIM + C.gray)
       push('', null)
       pushCentered('Espacio para volver', C.brightCyan)
@@ -460,11 +461,66 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  render(world, localPlayerIndex = 0) {
+  // A quick full-screen ranking view while playing, opened/closed with R —
+  // see loop.js. There's no server to ask for a live, always-in-sync
+  // board, so this is a snapshot of the local leaderboard at the moment R
+  // was pressed rather than something that updates live while it's open;
+  // in solo/co-op-host it also pauses the simulation for as long as it's
+  // shown (simplest way to show a wider table than the sidebar's Top 3
+  // without it scrolling underneath a moving game).
+  renderRankingOverlay(entries, mode) {
+    const cols = this.columns
+    const rows = this.rows
+    const width = Math.min(50, Math.max(30, cols - 4))
+    const inner = width - 2
+    const modeLabels = { all: 'Todos', solo: 'Solo', coop: 'Cooperativo' }
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered(`Ranking — ${modeLabels[mode] || 'Todos'}`, BOLD + C.brightCyan)
+    push('', null)
+    if (entries.length === 0) {
+      pushCentered('Sin puntajes todavía', DIM + C.gray)
+    } else {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]
+        const rank = String(i + 1).padStart(2, ' ')
+        const tag = e.mode === 'coop' ? 'C' : 'S'
+        const scoreStr = String(e.score)
+        const left = `${rank}. [${tag}] ${e.name} (ola ${e.wave})`
+        push(pad(left, inner - scoreStr.length) + scoreStr, i < 3 ? BOLD + C.brightYellow : C.white)
+      }
+    }
+    push('', null)
+    pushCentered('R vuelve al juego', DIM + C.gray)
+
+    const lines = [{ text: '╔' + '═'.repeat(inner) + '╗', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '║' + text + '║', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '╚' + '═'.repeat(inner) + '╝', color: BORDER_COLOR })
+
+    const top = Math.max(0, Math.floor((rows - lines.length) / 2))
+    const left = Math.max(0, Math.floor((cols - width) / 2))
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+    for (let r = 0; r < lines.length && top + r < rows; r++) {
+      const { text, color } = lines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  render(world, localPlayerIndex = 0, topEntries = []) {
     const cols = this.columns
     const rows = this.rows
 
-    const panel = this._panelLines(world, localPlayerIndex)
+    const panel = this._panelLines(world, localPlayerIndex, topEntries)
     // The simulated arena (world.width/height) is capped smaller than the
     // terminal by arenaSize() — plot against those bounds, but still fill
     // a full-terminal-width grid so leftover content outside the arena is
@@ -714,7 +770,7 @@ class TerminalRenderer {
     return lines
   }
 
-  _panelLines(world, localPlayerIndex = 0) {
+  _panelLines(world, localPlayerIndex = 0, topEntries = []) {
     const inner = PANEL_WIDTH - 2
     const p = world.players[localPlayerIndex] || world.player
     const weaponId = p.weaponOrder[p.currentWeaponIndex]
@@ -769,12 +825,27 @@ class TerminalRenderer {
       push(pad(`[${'█'.repeat(pct)}${'░'.repeat(12 - pct)}]`, inner), bossColor(world.boss))
     }
 
+    if (topEntries.length > 0) {
+      push(pad('', inner), null)
+      push(pad('Top 3', inner), C.white)
+      for (let i = 0; i < Math.min(3, topEntries.length); i++) {
+        const e = topEntries[i]
+        const scoreStr = String(e.score)
+        const left = ` ${i + 1}.${e.name}`
+        push(
+          pad(left, inner - scoreStr.length) + scoreStr,
+          i === 0 ? C.brightYellow : DIM + C.white
+        )
+      }
+    }
+
     push(pad('', inner), null)
     push(pad('Controles', inner), C.white)
     push(pad(' WASD     mover', inner), DIM + C.gray)
     push(pad(' Espacio  disparar', inner), DIM + C.gray)
     push(pad(' E        cambiar', inner), DIM + C.gray)
     push(pad(' X        habilidad', inner), DIM + C.gray)
+    push(pad(' R        ranking', inner), DIM + C.gray)
     push(pad(' Q        salir', inner), DIM + C.gray)
 
     if (world.statusMessage) {
