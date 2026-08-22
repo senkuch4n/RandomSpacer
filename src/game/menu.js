@@ -35,12 +35,13 @@ function createMenu() {
       const downEdge = input.down && !this._prevDown
       const leftEdge = input.left && !this._prevLeft
       const rightEdge = input.right && !this._prevRight
-      const confirmEdge = input.fire && !this._prevConfirm
+      const confirmHeld = input.fire || input.confirm
+      const confirmEdge = confirmHeld && !this._prevConfirm
       this._prevUp = input.up
       this._prevDown = input.down
       this._prevLeft = input.left
       this._prevRight = input.right
-      this._prevConfirm = input.fire
+      this._prevConfirm = confirmHeld
 
       if (this.screen !== 'main') {
         if (confirmEdge) this.screen = 'main'

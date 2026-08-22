@@ -87,7 +87,8 @@ class InputManager {
       else if (lower === 'd') this._mark('right')
       else if (lower === 'w') this._mark('up')
       else if (lower === 's') this._mark('down')
-      else if (ch === ' ' || ch === '\r' || ch === '\n') this._mark('fire')
+      else if (ch === ' ') this._mark('fire')
+      else if (ch === '\r' || ch === '\n') this._mark('confirm')
       else if (lower === 'e' || ch === '\t') this._cyclePresses += 1
       else if (lower === 'x') this._mark('ability')
     }
@@ -112,6 +113,7 @@ class InputManager {
       left: this._held('left'),
       right: this._held('right'),
       fire: this._held('fire'),
+      confirm: this._held('confirm'),
       cycleWeapon,
       activateAbility: this._held('ability')
     }

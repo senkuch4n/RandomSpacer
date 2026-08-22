@@ -175,10 +175,11 @@ class World {
 
     const upEdge = input.up && !choice._prevUp
     const downEdge = input.down && !choice._prevDown
-    const confirmEdge = input.fire && !choice._prevConfirm
+    const confirmHeld = input.fire || input.confirm
+    const confirmEdge = confirmHeld && !choice._prevConfirm
     choice._prevUp = input.up
     choice._prevDown = input.down
-    choice._prevConfirm = input.fire
+    choice._prevConfirm = confirmHeld
 
     const n = choice.options.length
     if (upEdge) choice.selected = (choice.selected - 1 + n) % n
@@ -509,16 +510,18 @@ class World {
   }
 
   // Edge-triggered nav/confirm, same pattern as menu.js — input.up/down/
-  // fire are level-triggered (held-state) so comparing against last tick
-  // is what turns them into a single move/confirm per keypress.
+  // confirm are level-triggered (held-state) so comparing against last
+  // tick is what turns them into a single move/confirm per keypress.
+  // Confirm is Enter specifically (not Space/fire) so picking a level-up
+  // item can't be triggered by the same key used to shoot.
   _updateItemChoice(input) {
     const choice = this.itemChoice
     const upEdge = input.up && !choice._prevUp
     const downEdge = input.down && !choice._prevDown
-    const confirmEdge = input.fire && !choice._prevConfirm
+    const confirmEdge = input.confirm && !choice._prevConfirm
     choice._prevUp = input.up
     choice._prevDown = input.down
-    choice._prevConfirm = input.fire
+    choice._prevConfirm = input.confirm
 
     const n = choice.options.length
     if (upEdge) choice.selected = (choice.selected - 1 + n) % n

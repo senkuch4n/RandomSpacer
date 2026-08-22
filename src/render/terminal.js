@@ -459,7 +459,7 @@ class TerminalRenderer {
       push(label, color)
     }
     push('', null)
-    pushCentered('W/S elegir · Espacio', DIM + C.gray)
+    pushCentered('W/S elegir · Enter', DIM + C.gray)
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
     for (const { text, color } of body) {
