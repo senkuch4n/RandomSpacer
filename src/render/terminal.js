@@ -2,28 +2,13 @@
 
 const tty = require('bare-tty')
 const items = require('../items')
+const experienceApi = require('../game/experience')
 const pkg = require('../../package.json')
 
-const RESET = '\x1b[0m'
-const BOLD = '\x1b[1m'
-const DIM = '\x1b[2m'
-const C = {
-  cyan: '\x1b[36m',
-  brightCyan: '\x1b[96m',
-  yellow: '\x1b[33m',
-  brightYellow: '\x1b[93m',
-  red: '\x1b[31m',
-  brightRed: '\x1b[91m',
-  brightMagenta: '\x1b[95m',
-  brightGreen: '\x1b[92m',
-  white: '\x1b[37m',
-  gray: '\x1b[90m'
-}
-
-function colored(code, text) {
-  return `${code}${text}${RESET}`
-}
-
+// Top block: two info lines + separator. One more row below the arena is
+// reserved for the experience bar.
+const HUD_ROWS = 3
+const XP_BAR_ROWS = 1
 // Single-width Unicode arrows read as a ship's facing direction much more
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
 const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
@@ -83,8 +68,8 @@ class TerminalRenderer {
   }
 
   arenaSize() {
-    const availWidth = Math.max(10, this.columns - PANEL_WIDTH - PANEL_GAP)
-    const availHeight = Math.max(5, this.rows - 2)
+    const availWidth = Math.max(10, this.columns)
+    const availHeight = Math.max(5, this.rows - HUD_ROWS - XP_BAR_ROWS)
     return {
       width: Math.min(MAX_ARENA_WIDTH, availWidth),
       height: Math.min(MAX_ARENA_HEIGHT, availHeight)
@@ -167,26 +152,13 @@ class TerminalRenderer {
 
   render(world) {
     const cols = this.columns
-    const rows = this.rows
-
-    const panel = this._panelLines(world)
-    const arenaW = Math.min(world.width, Math.max(1, cols - PANEL_WIDTH - PANEL_GAP))
-    const arenaH = Math.min(world.height, Math.max(1, rows - 2))
-
-    const contentWidth = PANEL_WIDTH + PANEL_GAP + (arenaW + 2)
-    const contentHeight = Math.max(panel.length, arenaH + 2)
-    const left = Math.max(0, Math.floor((cols - contentWidth) / 2))
-    const top = Math.max(0, Math.floor((rows - contentHeight) / 2))
-
-    const grid = new Array(rows)
-    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
-
-    for (let r = 0; r < panel.length && top + r < rows; r++) {
-      const { text, color } = panel[r]
-      for (let c = 0; c < text.length && left + c < cols; c++) {
-        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
-      }
-    }
+    const totalRows = Math.max(5, this.rows - HUD_ROWS - XP_BAR_ROWS)
+    // The simulated arena (world.width/height) is capped smaller than the
+    // terminal by arenaSize() — plot against those bounds, but still fill
+    // a full-terminal-width grid so leftover content outside the arena is
+    // blanked out every frame instead of lingering.
+    const arenaW = Math.min(world.width, cols)
+    const arenaH = Math.min(world.height, totalRows)
 
     const arenaLeft = left + PANEL_WIDTH + PANEL_GAP
     const arenaTop = top
@@ -251,7 +223,11 @@ class TerminalRenderer {
 
     const p = world.player
     const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
-    if (p.alive && !blinking) plot(p.pos.x, p.pos.y, colored(SHIP_COLOR, shipGlyph(p.angle)))
+    if (p.alive && !blinking) plot(grid, arenaW, arenaH, p.pos.x, p.pos.y, shipGlyph(p.angle))
+
+    const lines = [this._hudLine1(world), this._hudLine2(world), '-'.repeat(cols)]
+    for (const row of grid) lines.push(row.join(''))
+    lines.push(this._xpBarLine(world, cols))
 
     if (world.gameOver) {
       const msg = ` GAME OVER — puntaje: ${world.player.score} — Q para salir `
@@ -328,6 +304,15 @@ class TerminalRenderer {
     }
     lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
     return lines
+  }
+
+  _xpBarLine(world, cols) {
+    const xp = world.experience
+    const pct = Math.min(100, Math.floor(experienceApi.percent(xp)))
+    const suffix = `] ${pct}% Nv:${xp.level}`
+    const inner = Math.max(10, cols - 5 - suffix.length)
+    const filled = Math.max(0, Math.min(inner, Math.round((pct / 100) * inner)))
+    return `EXP [${'#'.repeat(filled)}${'.'.repeat(inner - filled)}${suffix}`.padEnd(cols)
   }
 }
 

@@ -16,6 +16,10 @@ const MAX_COUNT = 140
 // ms between spawns inside the pour; shrinks as waves go up
 const SPAWN_INTERVAL = [110, 380]
 
+// Opening grace period: the very first wave holds back this long before
+// the pour begins, and its enemies enter from the arena edges.
+const MATCH_START_DELAY_MS = 1000
+
 const FORMATIONS = ['scatter', 'cluster', 'wall', 'spiral', 'ring']
 
 function rollCount(rng, wave) {
@@ -144,12 +148,22 @@ function clamp(v, min, max) {
 // Builds the full spawn plan for one wave.
 // Returns { count, formation, entries: [{ delayMs, x, y, tier, speed, angle }] }
 // sorted by delayMs, ready for the world to drain over time.
-function createWavePlan({ rng, width, height, wave }) {
+// With `matchStart` (wave 1 of a run only) every enemy enters from an edge
+// after the initial grace delay instead of using a formation layout.
+function createWavePlan({ rng, width, height, wave, matchStart = false }) {
   const count = rollCount(rng, wave)
   const formation = rng.pick(FORMATIONS)
   const intervalScale = 1 / (1 + 0.08 * (wave - 1))
 
-  const points = FORMATION_BUILDERS[formation](count, { rng, width, height })
+  let points
+  if (matchStart) {
+    points = Array.from({ length: count }, () => {
+      const p = edgePoint(rng, width, height)
+      return { ...p, angle: inwardAngle(p, width, height) }
+    })
+  } else {
+    points = FORMATION_BUILDERS[formation](count, { rng, width, height })
+  }
 
   let delayMs = 0
   const entries = points.map((p) => {
@@ -164,6 +178,10 @@ function createWavePlan({ rng, width, height, wave }) {
       angle: p.angle ?? rng.angle()
     }
   })
+
+  if (matchStart) {
+    for (const e of entries) e.delayMs += MATCH_START_DELAY_MS
+  }
 
   return { count, formation, entries }
 }
