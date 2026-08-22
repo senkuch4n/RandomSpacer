@@ -29,6 +29,7 @@ function colored(code, text) {
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
 const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
 const SHIP_COLOR = BOLD + C.brightCyan
+const PARTNER_SHIP_COLOR = BOLD + C.brightMagenta
 const ASTEROID_COLOR = { large: C.white, medium: C.gray, small: DIM + C.gray }
 const PLAYER_SHOT_COLOR = C.brightYellow
 const BOSS_SHOT_COLOR = C.brightRed
@@ -149,6 +150,52 @@ class TerminalRenderer {
     this.out.end('\x1b[?25h\x1b[2J\x1b[H', () => this.out.destroy())
   }
 
+  // Shown while src/net/coop.js is joining the Hyperswarm lobby and
+  // waiting for a peer. `status` is a short line under the animated
+  // "buscando" text (e.g. connection state or an error to show before
+  // falling back to the menu).
+  renderSearching(status) {
+    const cols = this.columns
+    const rows = this.rows
+    const width = Math.min(46, Math.max(30, cols - 4))
+    const inner = width - 2
+    const dots = '.'.repeat(Math.floor(Date.now() / 400) % 4)
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('✦ RANDOMSPACE ✦', BOLD + C.brightCyan)
+    push('', null)
+    pushCentered('Cooperativo', BOLD + C.brightMagenta)
+    pushCentered(`Buscando compañero${dots}`, C.brightCyan)
+    if (status) {
+      push('', null)
+      pushCentered(status, DIM + C.gray)
+    }
+    push('', null)
+    pushCentered('Q para cancelar', DIM + C.gray)
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+
+    const top = Math.max(0, Math.floor((rows - lines.length) / 2))
+    const left = Math.max(0, Math.floor((cols - width) / 2))
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+    for (let r = 0; r < lines.length && top + r < rows; r++) {
+      const { text, color } = lines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
   renderMenu(menu) {
     const cols = this.columns
     const rows = this.rows
@@ -230,11 +277,11 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  render(world) {
+  render(world, localPlayerIndex = 0) {
     const cols = this.columns
     const rows = this.rows
 
-    const panel = this._panelLines(world)
+    const panel = this._panelLines(world, localPlayerIndex)
     // The simulated arena (world.width/height) is capped smaller than the
     // terminal by arenaSize() — plot against those bounds, but still fill
     // a full-terminal-width grid so leftover content outside the arena is
@@ -353,9 +400,17 @@ class TerminalRenderer {
       }
     }
 
-    const p = world.player
-    const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
-    if (p.alive && !blinking) plot(p.pos.x, p.pos.y, colored(SHIP_COLOR, shipGlyph(p.angle)))
+    // In co-op both ships render; the local viewer's own ship keeps the
+    // usual cyan, a partner ship on another peer's screen shows magenta so
+    // the two are never ambiguous.
+    for (let i = 0; i < world.players.length; i++) {
+      const p = world.players[i]
+      const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
+      if (p.alive && !blinking) {
+        const color = i === localPlayerIndex ? SHIP_COLOR : PARTNER_SHIP_COLOR
+        plot(p.pos.x, p.pos.y, colored(color, shipGlyph(p.angle)))
+      }
+    }
 
     // Writes `msg` as a single grid cell (the rest of its cells are left
     // empty, not overwritten) so a multi-character ANSI-colored string
@@ -420,7 +475,7 @@ class TerminalRenderer {
     const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
 
     pushCentered('GAME OVER', BOLD + C.brightRed)
-    pushCentered(`Puntaje: ${world.player.score}`, C.brightYellow)
+    pushCentered(`Puntaje: ${world.score}`, C.brightYellow)
     push('', null)
     if (choice) {
       for (let i = 0; i < choice.options.length; i++) {
@@ -476,9 +531,9 @@ class TerminalRenderer {
     return lines
   }
 
-  _panelLines(world) {
+  _panelLines(world, localPlayerIndex = 0) {
     const inner = PANEL_WIDTH - 2
-    const p = world.player
+    const p = world.players[localPlayerIndex] || world.player
     const weaponId = p.weaponOrder[p.currentWeaponIndex]
     const weaponDef = items.byId(weaponId)
     const ammo = weaponDef.unlimitedAmmo ? '∞' : (p.ammo[weaponId] ?? 0)
@@ -491,7 +546,12 @@ class TerminalRenderer {
     push(center(`v${pkg.version}`, inner), DIM + C.gray)
     push(pad('', inner), null)
     push(pad(`Vidas   ${hearts}`, inner), C.brightRed)
-    push(pad(`Score   ${p.score}`, inner), C.brightYellow)
+    if (world.players.length > 1) {
+      const partner = world.players[localPlayerIndex === 0 ? 1 : 0]
+      const partnerHearts = partner.alive ? '♥ '.repeat(Math.max(0, partner.lives)).trim() : '✝'
+      push(pad(`Compa   ${partnerHearts || '-'}`, inner), C.brightMagenta)
+    }
+    push(pad(`Score   ${world.score}`, inner), C.brightYellow)
     push(pad(`Ola     ${world.wave}`, inner), C.brightCyan)
     push(pad('', inner), null)
     const xpPct = Math.max(

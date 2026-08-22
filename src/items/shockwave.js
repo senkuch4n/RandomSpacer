@@ -23,7 +23,7 @@ module.exports = {
   activate({ player, world }) {
     world.asteroids = world.asteroids.filter((a) => {
       if (vector.distance(player.pos, a.pos) <= RADIUS) {
-        player.score += 5
+        world.score += 5
         return false
       }
       return true
