@@ -27,10 +27,22 @@ function createMenu() {
       { id: 'coop-host', label: 'Crear partida' },
       { id: 'coop-join', label: 'Unirse con código' }
     ],
-    selected: 0,
-    coopSelected: 0,
+    // The ranking screen's own selectable list: the first three rows
+    // double as mode filters (moving the cursor onto one immediately
+    // switches what the table on the right shows, no confirm needed —
+    // it's a filter, not an action) and the last row is the actual
+    // "Volver al menú" action, needing confirm like everywhere else.
+    rankingItems: [
+      { label: 'Todos', mode: 'all' },
+      { label: 'Solo', mode: 'solo' },
+      { label: 'Cooperativo', mode: 'coop' },
+      { label: 'Volver al menú', back: true }
+    ],
+    rankingSelected: 0,
     rankingModeIndex: 0,
     rankingModes: ['all', 'solo', 'coop'],
+    selected: 0,
+    coopSelected: 0,
     difficultyIndex: difficultyApi.DEFAULT_INDEX,
     _prevUp: false,
     _prevDown: false,
@@ -77,13 +89,17 @@ function createMenu() {
       }
 
       if (this.screen === 'ranking') {
-        // Left/right cycle which mode's scores are shown (Todos/Solo/
-        // Cooperativo); confirm (not left, since that's taken by the
-        // filter) goes back to the main screen.
-        const n = this.rankingModes.length
-        if (leftEdge) this.rankingModeIndex = (this.rankingModeIndex - 1 + n) % n
-        if (rightEdge) this.rankingModeIndex = (this.rankingModeIndex + 1) % n
-        if (confirmEdge) this.screen = 'main'
+        const n = this.rankingItems.length
+        if (upEdge) this.rankingSelected = (this.rankingSelected - 1 + n) % n
+        if (downEdge) this.rankingSelected = (this.rankingSelected + 1) % n
+
+        const highlighted = this.rankingItems[this.rankingSelected]
+        if (!highlighted.back) this.rankingModeIndex = this.rankingSelected
+
+        if (confirmEdge && highlighted.back) {
+          this.screen = 'main'
+          this.rankingSelected = 0
+        }
         return null
       }
 

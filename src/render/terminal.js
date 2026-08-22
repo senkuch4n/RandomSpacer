@@ -279,7 +279,7 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  renderMenu(menu, rankingEntries = []) {
+  renderMenu(menu) {
     const cols = this.columns
     const rows = this.rows
     const width = Math.min(50, Math.max(30, cols - 4))
@@ -316,28 +316,6 @@ class TerminalRenderer {
       push('', null)
       pushCentered('W/S elegir · Espacio confirma', DIM + C.gray)
       pushCentered('A volver', DIM + C.gray)
-    } else if (menu.screen === 'ranking') {
-      const modeLabels = { all: 'Todos', solo: 'Solo', coop: 'Cooperativo' }
-      pushCentered('Ranking', BOLD + C.brightGreen)
-      pushCentered(`◀ ${modeLabels[menu.rankingMode]} ▶`, C.brightCyan)
-      push('', null)
-      if (rankingEntries.length === 0) {
-        pushCentered('Sin puntajes todavía', DIM + C.gray)
-      } else {
-        for (let i = 0; i < rankingEntries.length; i++) {
-          const e = rankingEntries[i]
-          const rank = String(i + 1).padStart(2, ' ')
-          const tag = e.mode === 'coop' ? 'C' : 'S'
-          const scoreStr = String(e.score)
-          const left = `${rank}. [${tag}] ${e.name}`
-          push(
-            pad(left, inner - scoreStr.length) + scoreStr,
-            i < 3 ? BOLD + C.brightYellow : C.white
-          )
-        }
-      }
-      push('', null)
-      pushCentered('A/D cambia filtro · Espacio volver', DIM + C.gray)
     } else {
       for (let i = 0; i < menu.items.length; i++) {
         const item = menu.items[i]
@@ -388,6 +366,94 @@ class TerminalRenderer {
       const { text, color } = lines[r]
       for (let c = 0; c < text.length && left + c < cols; c++) {
         grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  // Two-column layout matching gameplay's panel+arena composition instead
+  // of a small centered popup: a boxed sidebar on the left (title, mode
+  // filters that apply the instant you highlight them, and an explicit
+  // "Volver al menú" row) and the ranking table itself in a double-line
+  // box on the right, where the arena normally sits.
+  renderRanking(menu, entries) {
+    const cols = this.columns
+    const rows = this.rows
+    const inner = PANEL_WIDTH - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+
+    const sidebar = []
+    const push = (text, color) => sidebar.push({ text: pad(text, inner), color })
+
+    push(center('RANDOMSPACE', inner), BOLD + C.brightCyan)
+    push(center(`v${pkg.version}`, inner), DIM + C.gray)
+    push('', null)
+    push('Ranking', BOLD + C.brightGreen)
+    push('', null)
+    for (let i = 0; i < menu.rankingItems.length; i++) {
+      const item = menu.rankingItems[i]
+      const isSelected = i === menu.rankingSelected
+      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
+    }
+    push('', null)
+    push('W/S elegir', DIM + C.gray)
+    push('Espacio confirma', DIM + C.gray)
+
+    const panelLines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of sidebar) {
+      panelLines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    panelLines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+
+    const boxW = Math.min(50, Math.max(30, cols - PANEL_WIDTH - PANEL_GAP - 2))
+    const modeLabels = { all: 'Todos', solo: 'Solo', coop: 'Cooperativo' }
+    const tableLines = []
+    const tpush = (text, color) => tableLines.push({ text: pad(text, boxW), color })
+    const tpushCentered = (text, color) => tableLines.push({ text: center(text, boxW), color })
+
+    tpushCentered(`Ranking — ${modeLabels[menu.rankingMode]}`, BOLD + C.brightCyan)
+    tpush('', null)
+    if (entries.length === 0) {
+      tpushCentered('Sin puntajes todavía', DIM + C.gray)
+    } else {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]
+        const rank = String(i + 1).padStart(2, ' ')
+        const tag = e.mode === 'coop' ? 'C' : 'S'
+        const scoreStr = String(e.score)
+        const left = `${rank}. [${tag}] ${e.name} (ola ${e.wave})`
+        tpush(pad(left, boxW - scoreStr.length) + scoreStr, i < 3 ? BOLD + C.brightYellow : C.white)
+      }
+    }
+
+    const boxLines = [{ text: '╔' + '═'.repeat(boxW) + '╗', color: BORDER_COLOR }]
+    for (const { text, color } of tableLines) {
+      boxLines.push({ text: '║' + text + '║', color: color || BORDER_COLOR })
+    }
+    boxLines.push({ text: '╚' + '═'.repeat(boxW) + '╝', color: BORDER_COLOR })
+
+    const contentWidth = PANEL_WIDTH + PANEL_GAP + (boxW + 2)
+    const contentHeight = Math.max(panelLines.length, boxLines.length)
+    const left = Math.max(0, Math.floor((cols - contentWidth) / 2))
+    const top = Math.max(0, Math.floor((rows - contentHeight) / 2))
+
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    for (let r = 0; r < panelLines.length && top + r < rows; r++) {
+      const { text, color } = panelLines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    const boxLeft = left + PANEL_WIDTH + PANEL_GAP
+    for (let r = 0; r < boxLines.length && top + r < rows; r++) {
+      const { text, color } = boxLines[r]
+      for (let c = 0; c < text.length && boxLeft + c < cols; c++) {
+        grid[top + r][boxLeft + c] = color ? colored(color, text[c]) : text[c]
       }
     }
 

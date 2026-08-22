@@ -166,7 +166,14 @@ function startGame({ rng, onExit, storageDir }) {
           runCoopJoinCode(difficulty)
           return
         }
-        renderer.renderMenu(menu, leaderboardApi.topEntries(leaderboardEntries, menu.rankingMode))
+        if (menu.screen === 'ranking') {
+          renderer.renderRanking(
+            menu,
+            leaderboardApi.topEntries(leaderboardEntries, menu.rankingMode, 15)
+          )
+        } else {
+          renderer.renderMenu(menu)
+        }
       } catch (err) {
         stop(1)
         console.error('[menu:error]', err)
