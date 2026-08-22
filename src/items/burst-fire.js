@@ -7,14 +7,13 @@ const SPREAD_RAD = 0.18
 const SHOTS = 3
 
 // Fires several bullets in one narrow spread instead of a single shot.
-// Each activation consumes one ammo charge regardless of shot count.
 module.exports = {
   id: 'burst-fire',
   name: 'Disparo en rafaga',
   symbol: ':',
   type: 'weapon',
   cooldownMs: 500,
-  unlimitedAmmo: false,
+  unlimitedAmmo: true,
   ammoPerPickup: 6,
   fieldPickup: true,
 
