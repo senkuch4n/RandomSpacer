@@ -15,7 +15,11 @@ module.exports = {
   symbol: ':',
   type: 'weapon',
   cooldownMs: 700,
-  unlimitedAmmo: false,
+  // Infinite ammo, matching the rest of the roster (bomb/missile/
+  // shockwave) after Lautaro's "balas infinitas" balance change on main —
+  // this file didn't exist there yet (it replaced burst-fire.js, which
+  // did get that change), so it's applied here to keep parity.
+  unlimitedAmmo: true,
   ammoPerPickup: 5,
   fieldPickup: true,
 
