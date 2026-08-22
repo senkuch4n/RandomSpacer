@@ -59,6 +59,8 @@ class World {
     this._queuedItemChoices = 0
     this.wave = 1
     this.gameOver = false
+    this.gameOverChoice = null
+    this.gameOverAction = null
     this.victory = false
     this.statusMessage = ''
     this.nextPickupInMs = this._rollPickupDelay()
@@ -122,7 +124,10 @@ class World {
   }
 
   update(dtMs, input) {
-    if (this.gameOver || this.victory) return
+    if (this.gameOver || this.victory) {
+      this._updateGameOverChoice(input)
+      return
+    }
 
     // A pending item choice pauses the whole simulation (no enemy/
     // projectile/timer updates) until the player picks one, same as a
@@ -145,7 +150,41 @@ class World {
     this._handleCollisions()
     this._checkProgression(dtMs)
 
-    if (!this.player.alive) this.gameOver = true
+    if (!this.player.alive) {
+      this.gameOver = true
+      this.gameOverChoice = {
+        options: [
+          { id: 'restart', label: 'Reintentar' },
+          { id: 'menu', label: 'Menú principal' }
+        ],
+        selected: 0,
+        _prevUp: false,
+        _prevDown: false,
+        _prevConfirm: false
+      }
+    }
+  }
+
+  // Edge-triggered nav/confirm, same pattern as the item choice and menu
+  // screens. Confirming just records the choice in gameOverAction — the
+  // World has no say in tearing itself down/rebuilding the renderer, so
+  // loop.js reads this after update() and drives the actual transition.
+  _updateGameOverChoice(input) {
+    const choice = this.gameOverChoice
+    if (!choice || this.gameOverAction) return
+
+    const upEdge = input.up && !choice._prevUp
+    const downEdge = input.down && !choice._prevDown
+    const confirmEdge = input.fire && !choice._prevConfirm
+    choice._prevUp = input.up
+    choice._prevDown = input.down
+    choice._prevConfirm = input.fire
+
+    const n = choice.options.length
+    if (upEdge) choice.selected = (choice.selected - 1 + n) % n
+    if (downEdge) choice.selected = (choice.selected + 1) % n
+
+    if (confirmEdge) this.gameOverAction = choice.options[choice.selected].id
   }
 
   _updatePlayer(dt, dtMs, input) {
