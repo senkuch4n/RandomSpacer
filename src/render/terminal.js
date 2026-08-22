@@ -108,17 +108,35 @@ function center(text, width) {
   return ' '.repeat(left) + text + ' '.repeat(width - text.length - left)
 }
 
+// Real terminal resizes (dragging a window edge) often fire a burst of
+// several 'resize' events within a few ms rather than one clean event —
+// without debouncing, each one would immediately recompute layout and
+// hand render() a different `top`/arena size mid-burst, which looks
+// exactly like the whole board jittering up and down. Waiting this long
+// after the last event in a burst before actually applying it smooths
+// that out; it's imperceptible as an added delay to a human resizing a
+// window.
+const RESIZE_DEBOUNCE_MS = 80
+
 class TerminalRenderer {
   constructor() {
     this.out = new tty.WriteStream(1)
+    // Cached rather than read live from `this.out` on every render() call
+    // — snapshotting once per actual resize (below) means a frame's
+    // layout can't shift mid-render if the underlying stream's reported
+    // size were to change (or be read inconsistently) between the many
+    // property reads a single render() does.
+    this._columns = this.out.columns
+    this._rows = this.out.rows
+    this._resizeTimer = null
   }
 
   get columns() {
-    return this.out.columns
+    return this._columns
   }
 
   get rows() {
-    return this.out.rows
+    return this._rows
   }
 
   arenaSize() {
@@ -135,7 +153,14 @@ class TerminalRenderer {
   // doesn't pile up listeners still pointing at discarded World objects.
   onResize(cb) {
     this.out.removeAllListeners('resize')
-    this.out.on('resize', cb)
+    this.out.on('resize', () => {
+      clearTimeout(this._resizeTimer)
+      this._resizeTimer = setTimeout(() => {
+        this._columns = this.out.columns
+        this._rows = this.out.rows
+        cb()
+      }, RESIZE_DEBOUNCE_MS)
+    })
   }
 
   start() {
@@ -143,6 +168,7 @@ class TerminalRenderer {
   }
 
   stop() {
+    clearTimeout(this._resizeTimer)
     // Flush the cursor-restore sequence before destroying the stream — an
     // open bare-tty WriteStream keeps the event loop alive, so without an
     // explicit destroy the process (and the terminal) never gets control
@@ -152,9 +178,12 @@ class TerminalRenderer {
 
   // Shown while src/net/coop.js is joining the Hyperswarm lobby and
   // waiting for a peer. `status` is a short line under the animated
-  // "buscando" text (e.g. connection state or an error to show before
-  // falling back to the menu).
-  renderSearching(status) {
+  // "buscando" text (e.g. connection state, a code to share, or an error
+  // to show before falling back to the menu). `elapsedMs` (time since the
+  // search started, tracked by loop.js) renders as a running mm:ss timer
+  // so a long wait is visibly still counting instead of looking frozen —
+  // there's no way to tell "slow" from "stuck" otherwise.
+  renderSearching(status, elapsedMs) {
     const cols = this.columns
     const rows = this.rows
     const width = Math.min(46, Math.max(30, cols - 4))
@@ -169,6 +198,12 @@ class TerminalRenderer {
     push('', null)
     pushCentered('Cooperativo', BOLD + C.brightMagenta)
     pushCentered(`Buscando compañero${dots}`, C.brightCyan)
+    if (typeof elapsedMs === 'number') {
+      const totalSec = Math.max(0, Math.floor(elapsedMs / 1000))
+      const mm = String(Math.floor(totalSec / 60)).padStart(2, '0')
+      const ss = String(totalSec % 60).padStart(2, '0')
+      pushCentered(`${mm}:${ss}`, DIM + C.gray)
+    }
     if (status) {
       push('', null)
       pushCentered(status, BOLD + C.brightYellow)
@@ -244,7 +279,7 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  renderMenu(menu) {
+  renderMenu(menu, rankingEntries = []) {
     const cols = this.columns
     const rows = this.rows
     const width = Math.min(50, Math.max(30, cols - 4))
@@ -281,6 +316,28 @@ class TerminalRenderer {
       push('', null)
       pushCentered('W/S elegir · Espacio confirma', DIM + C.gray)
       pushCentered('A volver', DIM + C.gray)
+    } else if (menu.screen === 'ranking') {
+      const modeLabels = { all: 'Todos', solo: 'Solo', coop: 'Cooperativo' }
+      pushCentered('Ranking', BOLD + C.brightGreen)
+      pushCentered(`◀ ${modeLabels[menu.rankingMode]} ▶`, C.brightCyan)
+      push('', null)
+      if (rankingEntries.length === 0) {
+        pushCentered('Sin puntajes todavía', DIM + C.gray)
+      } else {
+        for (let i = 0; i < rankingEntries.length; i++) {
+          const e = rankingEntries[i]
+          const rank = String(i + 1).padStart(2, ' ')
+          const tag = e.mode === 'coop' ? 'C' : 'S'
+          const scoreStr = String(e.score)
+          const left = `${rank}. [${tag}] ${e.name}`
+          push(
+            pad(left, inner - scoreStr.length) + scoreStr,
+            i < 3 ? BOLD + C.brightYellow : C.white
+          )
+        }
+      }
+      push('', null)
+      pushCentered('A/D cambia filtro · Espacio volver', DIM + C.gray)
     } else {
       for (let i = 0; i < menu.items.length; i++) {
         const item = menu.items[i]

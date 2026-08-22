@@ -98,7 +98,8 @@ try {
   const rng = createRng({ source: createCongruential() })
   game = startGame({
     rng,
-    onExit: (code) => shutdown(code ?? 0)
+    onExit: (code) => shutdown(code ?? 0),
+    storageDir: dir
   })
 } catch (err) {
   console.error('[app:error]', err)

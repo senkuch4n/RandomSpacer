@@ -12,6 +12,7 @@ function createMenu() {
     items: [
       { id: 'play', label: 'Jugar' },
       { id: 'coop', label: 'Cooperativo', screen: 'coop' },
+      { id: 'ranking', label: 'Ranking', screen: 'ranking' },
       { id: 'controls', label: 'Controles', screen: 'controls' },
       { id: 'quit', label: 'Salir' }
     ],
@@ -28,6 +29,8 @@ function createMenu() {
     ],
     selected: 0,
     coopSelected: 0,
+    rankingModeIndex: 0,
+    rankingModes: ['all', 'solo', 'coop'],
     difficultyIndex: difficultyApi.DEFAULT_INDEX,
     _prevUp: false,
     _prevDown: false,
@@ -37,6 +40,10 @@ function createMenu() {
 
     get difficulty() {
       return difficultyApi.LEVELS[this.difficultyIndex]
+    },
+
+    get rankingMode() {
+      return this.rankingModes[this.rankingModeIndex]
     },
 
     // Returns 'play', 'quit', or one of coopItems' ids when the player
@@ -66,6 +73,17 @@ function createMenu() {
           return null
         }
         if (confirmEdge) return this.coopItems[this.coopSelected].id
+        return null
+      }
+
+      if (this.screen === 'ranking') {
+        // Left/right cycle which mode's scores are shown (Todos/Solo/
+        // Cooperativo); confirm (not left, since that's taken by the
+        // filter) goes back to the main screen.
+        const n = this.rankingModes.length
+        if (leftEdge) this.rankingModeIndex = (this.rankingModeIndex - 1 + n) % n
+        if (rightEdge) this.rankingModeIndex = (this.rankingModeIndex + 1) % n
+        if (confirmEdge) this.screen = 'main'
         return null
       }
 

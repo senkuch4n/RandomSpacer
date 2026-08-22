@@ -54,6 +54,7 @@ class CoopSession {
     this.onDisconnected = null // () => void
     this.onInput = null // host side: (input) => void, guest's input arrived
     this.onState = null // guest side: (worldSnapshot) => void, host's state arrived
+    this.onLeaderboard = null // (entries) => void, peer's leaderboard entries arrived
     // Optional (message) => void for loop.js to console.error — Hyperswarm
     // has no relay fallback, so when a match never connects the only way
     // to tell "stuck slow" from "never going to work" apart is to see how
@@ -129,6 +130,7 @@ class CoopSession {
     }
     if (msg.t === 'input' && this.onInput) this.onInput(msg.input)
     else if (msg.t === 'state' && this.onState) this.onState(msg.world)
+    else if (msg.t === 'leaderboard' && this.onLeaderboard) this.onLeaderboard(msg.entries)
   }
 
   _onClose() {
@@ -145,6 +147,15 @@ class CoopSession {
   sendState(world) {
     if (!this.conn) return
     this.conn.write(JSON.stringify({ t: 'state', world }))
+  }
+
+  // Gossips local leaderboard entries to whoever we just connected to —
+  // there's no server to host a shared ranking on, so this is how scores
+  // spread between installs at all: every co-op match is a chance for two
+  // local leaderboards to merge a little more of each other in.
+  sendLeaderboard(entries) {
+    if (!this.conn) return
+    this.conn.write(JSON.stringify({ t: 'leaderboard', entries }))
   }
 
   async close() {

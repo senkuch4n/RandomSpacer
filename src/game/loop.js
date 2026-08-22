@@ -1,9 +1,11 @@
 'use strict'
 
+const os = require('bare-os')
 const { World } = require('./world')
 const { TerminalRenderer } = require('../render/terminal')
 const { InputManager } = require('../render/input')
 const { createMenu } = require('./menu')
+const leaderboardApi = require('./leaderboard')
 const {
   CoopSession,
   generateCode,
@@ -11,6 +13,19 @@ const {
   normalizeCode,
   topicFromCode
 } = require('../net/coop')
+
+// Best-effort local player name for leaderboard entries — no separate
+// "enter your name" screen, since the OS username is already right there
+// and zero-friction. Falls back if userInfo isn't available for some
+// reason (shouldn't normally happen under Bare, but a leaderboard entry
+// failing to get a name shouldn't be fatal).
+function getPlayerName() {
+  try {
+    const info = os.userInfo()
+    if (info && info.username) return info.username
+  } catch {}
+  return 'Jugador'
+}
 
 const TICK_MS = 40 // 25 fps — plenty for an ASCII arena, cheap to redraw
 // Hyperswarm has no built-in fallback (TURN-style relay) if direct UDP
@@ -43,9 +58,38 @@ const EMPTY_INPUT = {
 // Returns a small controller so the caller (bin.mjs) can push status text
 // (e.g. OTA updater events) into the HUD and stop the game cleanly on
 // exit.
-function startGame({ rng, onExit }) {
+function startGame({ rng, onExit, storageDir }) {
   const renderer = new TerminalRenderer()
   const input = new InputManager()
+  const playerName = getPlayerName()
+
+  // Local, P2P-gossiped leaderboard (src/game/leaderboard.js) — loaded
+  // once and kept in memory rather than re-read from disk on every menu
+  // render; refreshed whenever a run ends or a co-op peer sends its own
+  // entries to merge in.
+  let leaderboardEntries = storageDir ? leaderboardApi.load(storageDir) : []
+
+  function recordScore(world, mode) {
+    if (!storageDir) return
+    leaderboardEntries = leaderboardApi.addEntry(storageDir, {
+      name: playerName,
+      score: world.score,
+      mode,
+      wave: world.wave,
+      date: new Date().toISOString().slice(0, 10)
+    })
+  }
+
+  // Runs once right when a co-op connection is established (not on every
+  // restart within it) — trades local leaderboard entries with whoever we
+  // just connected to and merges what comes back in, since there's no
+  // server to host a shared ranking on otherwise.
+  function wireLeaderboardSync(session) {
+    session.onLeaderboard = (entries) => {
+      if (storageDir) leaderboardEntries = leaderboardApi.mergeIncoming(storageDir, entries)
+    }
+    if (storageDir) session.sendLeaderboard(leaderboardEntries)
+  }
 
   let timer = null
   let stopped = false
@@ -122,7 +166,7 @@ function startGame({ rng, onExit }) {
           runCoopJoinCode(difficulty)
           return
         }
-        renderer.renderMenu(menu)
+        renderer.renderMenu(menu, leaderboardApi.topEntries(leaderboardEntries, menu.rankingMode))
       } catch (err) {
         stop(1)
         console.error('[menu:error]', err)
@@ -137,6 +181,7 @@ function startGame({ rng, onExit }) {
     currentSetStatus = (message) => world.setStatus(message)
 
     let lastTick = Date.now()
+    let recorded = false // guards against re-recording every tick spent on the game-over screen
 
     renderer.onResize(() => {
       const size = renderer.arenaSize()
@@ -155,6 +200,11 @@ function startGame({ rng, onExit }) {
       try {
         world.update(dtMs, [input.snapshot()])
         renderer.render(world)
+
+        if (world.gameOver && !recorded) {
+          recorded = true
+          recordScore(world, 'solo')
+        }
 
         // The World can't tear itself down/rebuild the renderer, so it
         // just records the player's game-over choice — loop.js drives
@@ -196,6 +246,7 @@ function startGame({ rng, onExit }) {
     armCoopDebug(session, 'auto')
     let settled = false
     let tick = 0
+    const startedAt = Date.now()
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
@@ -212,13 +263,14 @@ function startGame({ rng, onExit }) {
       settled = true
       clearTimeout(timeoutHandle)
       clearInterval(timer)
+      wireLeaderboardSync(session)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
     }
 
     timer = setInterval(() => {
       try {
-        renderer.renderSearching()
+        renderer.renderSearching(null, Date.now() - startedAt)
         tick++
         if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
           console.error('[coop-debug:auto]', session.debugSnapshot())
@@ -254,6 +306,7 @@ function startGame({ rng, onExit }) {
     armCoopDebug(session, 'host-code')
     let settled = false
     let tick = 0
+    const startedAt = Date.now()
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
@@ -270,13 +323,14 @@ function startGame({ rng, onExit }) {
       settled = true
       clearTimeout(timeoutHandle)
       clearInterval(timer)
+      wireLeaderboardSync(session)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
     }
 
     timer = setInterval(() => {
       try {
-        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`, Date.now() - startedAt)
         tick++
         if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
           console.error('[coop-debug:host-code]', session.debugSnapshot())
@@ -347,6 +401,7 @@ function startGame({ rng, onExit }) {
     armCoopDebug(session, 'join-code')
     let settled = false
     let tick = 0
+    const startedAt = Date.now()
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
@@ -363,13 +418,14 @@ function startGame({ rng, onExit }) {
       settled = true
       clearTimeout(timeoutHandle)
       clearInterval(timer)
+      wireLeaderboardSync(session)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
     }
 
     timer = setInterval(() => {
       try {
-        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`, Date.now() - startedAt)
         tick++
         if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
           console.error('[coop-debug:join-code]', session.debugSnapshot())
@@ -410,6 +466,7 @@ function startGame({ rng, onExit }) {
     }
 
     let lastTick = Date.now()
+    let recorded = false
     renderer.onResize(() => {
       const size = renderer.arenaSize()
       world.resize(size.width, size.height)
@@ -424,6 +481,11 @@ function startGame({ rng, onExit }) {
         world.update(dtMs, [input.snapshot(), remoteInput])
         renderer.render(world, 0)
         session.sendState(world.toSnapshot())
+
+        if (world.gameOver && !recorded) {
+          recorded = true
+          recordScore(world, 'coop')
+        }
 
         if (world.gameOverAction === 'restart') {
           clearInterval(timer)
@@ -448,6 +510,13 @@ function startGame({ rng, onExit }) {
     }
 
     let latestState = null
+    // The guest's runCoopGuest only runs once per connection (unlike
+    // runCoopHost, which the host re-enters on every restart) — the host
+    // can restart the same session many times, so "just entered game
+    // over" has to be detected as an edge on the incoming snapshots
+    // rather than a one-shot flag, or only the very first game over of
+    // the whole connection would ever get recorded.
+    let wasGameOver = false
     session.onState = (worldSnapshot) => {
       latestState = worldSnapshot
     }
@@ -461,7 +530,11 @@ function startGame({ rng, onExit }) {
     timer = setInterval(() => {
       try {
         session.sendInput(input.snapshot())
-        if (latestState) renderer.render(latestState, 1)
+        if (latestState) {
+          renderer.render(latestState, 1)
+          if (latestState.gameOver && !wasGameOver) recordScore(latestState, 'coop')
+          wasGameOver = latestState.gameOver
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-guest:error]', err)
