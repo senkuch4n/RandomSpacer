@@ -50,6 +50,19 @@ function bossColor(boss) {
   return (boss && BOSS_COLORS[boss.defId]) || BOSS_COLOR
 }
 
+// Small pixel-block silhouettes in the classic Space Invaders vein — each
+// boss gets its own alien/UFO shape instead of a single glyph. Only one
+// boss is ever on screen at a time, so there's room for a multi-cell
+// sprite without crowding the arena. Every row within a sprite must be
+// the same length; a space is a transparent (unplotted) pixel.
+const BOSS_SPRITES = {
+  sentinel: [' ▄█▄ ', '▀███▀', '▀▄ ▄▀'],
+  cutter: ['▀▄▄▄▄▄▀', ' █▀▀▀█ ', '▄▀   ▀▄'],
+  'swarm-mother': ['▄▄▄███▄▄▄', '█▀▀▀▀▀▀▀█', '▀▄▀   ▀▄▀'],
+  turret: ['  ▄█▄  ', ' █████ ', '▀▀ █ ▀▀'],
+  leviathan: ['  ▄▄▄▄▄  ', ' █▀▀▀▀▀█ ', ' █▄▄▄▄▄█ ', '  ▀▀ ▀▀  ']
+}
+
 // The HUD lives in a fixed-width boxed panel on the left; the arena is
 // centered in whatever terminal space remains to its right. Both panels
 // are top-aligned to the same row and the whole (panel + gap + arena)
@@ -219,6 +232,27 @@ class TerminalRenderer {
       }
     }
 
+    // Rounds the anchor once, then offsets every pixel by an integer
+    // amount — rounding each cell independently would let different
+    // pixels of the same sprite round to different columns as the boss
+    // drifts by fractional amounts, making it visibly wobble/shear frame
+    // to frame instead of moving as one rigid shape.
+    const plotSprite = (cx0, cy0, sprite, color) => {
+      const baseX = Math.round(cx0)
+      const baseY = Math.round(cy0)
+      const h = sprite.length
+      const w = sprite[0].length
+      const offRow = -Math.floor(h / 2)
+      const offCol = -Math.floor(w / 2)
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          const ch = sprite[r][c]
+          if (ch === ' ') continue
+          plot(baseX + offCol + c, baseY + offRow + r, colored(color, ch))
+        }
+      }
+    }
+
     // Arena frame, double-line box for a "screen within the screen" feel.
     if (arenaTop >= 0 && arenaTop < rows && arenaLeft >= 0) {
       const top_ = '╔' + '═'.repeat(arenaW) + '╗'
@@ -269,7 +303,12 @@ class TerminalRenderer {
     }
 
     if (world.boss) {
-      plot(world.boss.pos.x, world.boss.pos.y, colored(bossColor(world.boss), world.boss.symbol))
+      const sprite = BOSS_SPRITES[world.boss.defId]
+      if (sprite) {
+        plotSprite(world.boss.pos.x, world.boss.pos.y, sprite, bossColor(world.boss))
+      } else {
+        plot(world.boss.pos.x, world.boss.pos.y, colored(bossColor(world.boss), world.boss.symbol))
+      }
     }
 
     const p = world.player

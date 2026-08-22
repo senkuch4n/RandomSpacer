@@ -3,10 +3,14 @@
 const vector = require('../engine/vector')
 
 // size tier -> { radius, hp, symbol, splitInto }
+// Symbols use the same solid/light block-density language as the boss
+// sprites (src/render/terminal.js BOSS_SPRITES) — a retro arcade-pixel
+// look shared across every hostile on screen, tier size reading as block
+// density instead of a circle getting smaller.
 const TIERS = {
-  large: { radius: 3, hp: 3, symbol: 'O', splitInto: 'medium', splitCount: 2 },
-  medium: { radius: 2, hp: 2, symbol: 'o', splitInto: 'small', splitCount: 2 },
-  small: { radius: 1, hp: 1, symbol: '.', splitInto: null, splitCount: 0 }
+  large: { radius: 3, hp: 3, symbol: '▓', splitInto: 'medium', splitCount: 2 },
+  medium: { radius: 2, hp: 2, symbol: '▒', splitInto: 'small', splitCount: 2 },
+  small: { radius: 1, hp: 1, symbol: '░', splitInto: null, splitCount: 0 }
 }
 
 let nextId = 1
