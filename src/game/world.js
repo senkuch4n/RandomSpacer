@@ -111,10 +111,13 @@ class World {
   _updateEnemySpawns(dtMs) {
     if (this.pendingEnemies.length === 0) return
 
+    // Same biased number the plan was rolled with, so hp scaling matches
+    // the count/tier/speed curve for this difficulty.
+    const effectiveWave = Math.max(1, this.wave + this.difficulty.waveBias)
     this.waveElapsedMs += dtMs
     while (this.pendingEnemies.length > 0 && this.pendingEnemies[0].delayMs <= this.waveElapsedMs) {
       const spec = this.pendingEnemies.shift()
-      this.asteroids.push(asteroidApi.spawnAsteroid(this.rng, spec))
+      this.asteroids.push(asteroidApi.spawnAsteroid(this.rng, { ...spec, wave: effectiveWave }))
     }
   }
 
@@ -661,7 +664,6 @@ class World {
     this._queueItemChoice(ITEM_CHOICE_BOSS_KILL)
     this.setStatus(`${this.boss.name} derrotado`)
     this.boss = null
-    this.wave += 1
     this._spawnWave()
   }
 
@@ -692,6 +694,11 @@ class World {
 
   _checkProgression(dtMs) {
     if (!this.boss && this.pendingEnemies.length === 0 && this.asteroids.length === 0) {
+      // Clearing every enemy is what advances the wave counter — the boss
+      // that materializes right after belongs to (and scales with) the
+      // freshly incremented number, and defeating it just opens the next
+      // pour of enemies.
+      this.wave += 1
       this._spawnBoss()
     }
   }
