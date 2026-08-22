@@ -35,9 +35,40 @@ const ASTEROID_COLOR = { large: C.white, medium: C.gray, small: DIM + C.gray }
 const PLAYER_SHOT_COLOR = C.brightYellow
 const BOSS_SHOT_COLOR = C.brightRed
 const BOSS_COLOR = BOLD + C.brightMagenta
+// Each boss gets its own identity color (ship glyph, HUD name/HP bar,
+// intro banner, death burst) so they read as distinct threats rather
+// than palette-swapped copies of the same enemy.
+const BOSS_COLORS = {
+  sentinel: BOLD + C.brightCyan,
+  cutter: BOLD + C.brightRed,
+  'swarm-mother': BOLD + C.brightGreen,
+  turret: BOLD + C.brightYellow,
+  leviathan: BOLD + C.brightMagenta
+}
 const PICKUP_COLOR = C.brightGreen
 const RING_COLOR = C.cyan
 const BORDER_COLOR = C.cyan
+const DIFFICULTY_COLORS = { easy: C.brightGreen, normal: C.brightCyan, hard: C.brightRed }
+// Same semantics as DIFFICULTY_COLORS, reused for the item-choice modal's
+// per-type row colors (weapon/ability/plain pickup).
+const ITEM_TYPE_COLORS = { weapon: C.brightYellow, ability: C.brightGreen, pickup: C.brightRed }
+
+function bossColor(boss) {
+  return (boss && BOSS_COLORS[boss.defId]) || BOSS_COLOR
+}
+
+// Small pixel-block silhouettes in the classic Space Invaders vein — each
+// boss gets its own alien/UFO shape instead of a single glyph. Only one
+// boss is ever on screen at a time, so there's room for a multi-cell
+// sprite without crowding the arena. Every row within a sprite must be
+// the same length; a space is a transparent (unplotted) pixel.
+const BOSS_SPRITES = {
+  sentinel: [' ▄█▄ ', '▀███▀', '▀▄ ▄▀'],
+  cutter: ['▀▄▄▄▄▄▀', ' █▀▀▀█ ', '▄▀   ▀▄'],
+  'swarm-mother': ['▄▄▄███▄▄▄', '█▀▀▀▀▀▀▀█', '▀▄▀   ▀▄▀'],
+  turret: ['  ▄█▄  ', ' █████ ', '▀▀ █ ▀▀'],
+  leviathan: ['  ▄▄▄▄▄  ', ' █▀▀▀▀▀█ ', ' █▄▄▄▄▄█ ', '  ▀▀ ▀▀  ']
+}
 
 // The HUD lives in a fixed-width boxed panel on the left; the arena is
 // centered in whatever terminal space remains to its right. Both panels
@@ -143,7 +174,14 @@ class TerminalRenderer {
         push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
       }
       push('', null)
+      const diffColor = DIFFICULTY_COLORS[menu.difficulty.id] || C.white
+      pushCentered(`◀ Dificultad: ${menu.difficulty.label} ▶`, diffColor)
+      push('', null)
       pushCentered('W/S mover · Espacio elegir · Q salir', DIM + C.gray)
+      pushCentered('A/D cambia la dificultad', DIM + C.gray)
+      push('', null)
+      pushCentered('Aleph Hackathon — Pears Track', DIM + C.brightGreen)
+      pushCentered('Joel Serrudo · Lautaro Aponte', DIM + C.gray)
     }
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
@@ -157,6 +195,22 @@ class TerminalRenderer {
 
     const grid = new Array(rows)
     for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    // A sparse, slowly-twinkling starfield behind the menu box — purely
+    // decorative, so a cheap position hash (not the game's seeded rng)
+    // decides which cells are stars, and the current time decides which
+    // of those are lit this frame. The box drawn below overwrites
+    // whatever stars fall inside it.
+    const now = Date.now()
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const hash = (c * 928371 + r * 6151) % 977
+        if (hash >= 18) continue
+        const phase = Math.floor(now / 500 + hash) % 3
+        if (phase === 0) grid[r][c] = colored(DIM + C.gray, '.')
+        else if (phase === 1) grid[r][c] = colored(DIM + C.white, '·')
+      }
+    }
 
     for (let r = 0; r < lines.length && top + r < rows; r++) {
       const { text, color } = lines[r]
@@ -212,6 +266,27 @@ class TerminalRenderer {
       }
     }
 
+    // Rounds the anchor once, then offsets every pixel by an integer
+    // amount — rounding each cell independently would let different
+    // pixels of the same sprite round to different columns as the boss
+    // drifts by fractional amounts, making it visibly wobble/shear frame
+    // to frame instead of moving as one rigid shape.
+    const plotSprite = (cx0, cy0, sprite, color) => {
+      const baseX = Math.round(cx0)
+      const baseY = Math.round(cy0)
+      const h = sprite.length
+      const w = sprite[0].length
+      const offRow = -Math.floor(h / 2)
+      const offCol = -Math.floor(w / 2)
+      for (let r = 0; r < h; r++) {
+        for (let c = 0; c < w; c++) {
+          const ch = sprite[r][c]
+          if (ch === ' ') continue
+          plot(baseX + offCol + c, baseY + offRow + r, colored(color, ch))
+        }
+      }
+    }
+
     // Arena frame, double-line box for a "screen within the screen" feel.
     if (arenaTop >= 0 && arenaTop < rows && arenaLeft >= 0) {
       const top_ = '╔' + '═'.repeat(arenaW) + '╗'
@@ -251,39 +326,116 @@ class TerminalRenderer {
       if (e.type === 'shockwave-ring') {
         const radius = e.maxRadius * (e.ageMs / e.ttlMs)
         plotRing(e.pos.x, e.pos.y, radius, colored(RING_COLOR, 'o'))
+      } else if (e.type === 'boss-explosion') {
+        // A quick burst of two expanding rings (not one, so it reads as an
+        // explosion rather than a slow-moving circle like the shockwave).
+        const t = e.ageMs / e.ttlMs
+        const color = bossColor({ defId: e.defId })
+        plotRing(e.pos.x, e.pos.y, e.maxRadius * t, colored(color, '*'))
+        plotRing(e.pos.x, e.pos.y, e.maxRadius * t * 0.5, colored(BOLD + C.white, '*'))
       }
     }
 
-    if (world.boss) plot(world.boss.pos.x, world.boss.pos.y, colored(BOSS_COLOR, world.boss.symbol))
+    if (world.boss) {
+      const sprite = BOSS_SPRITES[world.boss.defId]
+      if (sprite) {
+        plotSprite(world.boss.pos.x, world.boss.pos.y, sprite, bossColor(world.boss))
+      } else {
+        plot(world.boss.pos.x, world.boss.pos.y, colored(bossColor(world.boss), world.boss.symbol))
+      }
+    }
 
     const p = world.player
     const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
     if (p.alive && !blinking) plot(p.pos.x, p.pos.y, colored(SHIP_COLOR, shipGlyph(p.angle)))
 
-    // Experience bar spans the full terminal width on the bottom row.
-    const xpRow = rows - 1
-    if (xpRow >= 0 && xpRow < rows) {
-      const xpLine = this._xpBarLine(world, cols)
-      for (let c = 0; c < cols; c++) grid[xpRow][c] = xpLine[c]
+    // Writes `msg` as a single grid cell (the rest of its cells are left
+    // empty, not overwritten) so a multi-character ANSI-colored string
+    // survives the per-cell `row.join('')` at the end without being torn
+    // apart the way slicing an already-colored string would (see the
+    // per-character coloring above for why that matters).
+    const plotBanner = (rowOffset, msg, color) => {
+      const row = arenaTop + 1 + rowOffset
+      const col = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - msg.length) / 2))
+      if (row < 0 || row >= rows) return
+      const wrapped = colored(color, msg)
+      for (let i = 0; i < msg.length; i++) {
+        const c = col + i
+        if (c >= 0 && c < cols) grid[row][c] = i === 0 ? wrapped : ''
+      }
+    }
+
+    if (world.bossIntroMs > 0 && world.boss) {
+      const blinkFast = Math.floor(world.bossIntroMs / 250) % 2 === 0
+      plotBanner(Math.floor(arenaH / 2) - 1, `¡JEFE!`, BOLD + bossColor(world.boss))
+      if (blinkFast) {
+        plotBanner(Math.floor(arenaH / 2) + 1, world.boss.name.toUpperCase(), bossColor(world.boss))
+      }
+    }
+
+    if (world.levelUpMs > 0) {
+      const blinkFast = Math.floor(world.levelUpMs / 200) % 2 === 0
+      if (blinkFast) {
+        plotBanner(2, `¡NIVEL ${world.experience.level}!`, BOLD + C.brightGreen)
+      }
     }
 
     if (world.gameOver) {
-      const msg = ` GAME OVER — puntaje: ${world.player.score} — Q para salir `
-      const row = arenaTop + 1 + Math.floor(arenaH / 2)
-      const col = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - msg.length) / 2))
-      if (row >= 0 && row < rows) {
-        // One visible character per grid cell, same as every other drawn
-        // string — stuffing the whole message into a single cell made the
-        // row emit more visible columns than the terminal has, wrapping
-        // and scrolling the screen every frame after game over.
-        for (let i = 0; i < msg.length; i++) {
-          const c = col + i
-          if (c >= 0 && c < cols) grid[row][c] = colored(BOLD + C.brightRed, msg[i])
+      plotBanner(
+        Math.floor(arenaH / 2),
+        ` GAME OVER — puntaje: ${world.player.score} — Q para salir `,
+        BOLD + C.brightRed
+      )
+    }
+
+    if (world.itemChoice) {
+      const modal = this._itemChoiceLines(world.itemChoice)
+      const modalTop = arenaTop + 1 + Math.max(0, Math.floor((arenaH - modal.length) / 2))
+      const modalWidth = modal[0].text.length
+      const modalLeft = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - modalWidth) / 2))
+      for (let r = 0; r < modal.length && modalTop + r < rows; r++) {
+        const { text, color } = modal[r]
+        for (let c = 0; c < text.length && modalLeft + c < cols; c++) {
+          grid[modalTop + r][modalLeft + c] = color ? colored(color, text[c]) : text[c]
         }
       }
     }
 
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  // A pause-and-pick modal drawn over the (frozen) arena, in the same
+  // boxed style as the sidebar/menu — every ITEM_CHOICE_LEVEL_INTERVAL
+  // levels in world.js.
+  _itemChoiceLines(choice) {
+    const width = 28
+    const inner = width - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('¡SUBISTE DE NIVEL!', BOLD + C.brightGreen)
+    pushCentered('Elegí un objeto', DIM + C.gray)
+    push('', null)
+    for (let i = 0; i < choice.options.length; i++) {
+      const def = choice.options[i]
+      const isSelected = i === choice.selected
+      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      const label = pad(pointer + def.name, inner - 3) + ' ' + def.symbol
+      const color = isSelected ? BOLD + C.brightYellow : ITEM_TYPE_COLORS[def.type] || C.white
+      push(label, color)
+    }
+    push('', null)
+    pushCentered('W/S elegir · Espacio', DIM + C.gray)
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+    return lines
   }
 
   _panelLines(world) {
@@ -304,6 +456,13 @@ class TerminalRenderer {
     push(pad(`Score   ${p.score}`, inner), C.brightYellow)
     push(pad(`Ola     ${world.wave}`, inner), C.brightCyan)
     push(pad('', inner), null)
+    const xpPct = Math.max(
+      0,
+      Math.min(12, Math.round((experienceApi.percent(world.experience) / 100) * 12))
+    )
+    push(pad(`Nivel   ${world.experience.level}`, inner), C.brightGreen)
+    push(pad(`[${'█'.repeat(xpPct)}${'░'.repeat(12 - xpPct)}]`, inner), C.brightGreen)
+    push(pad('', inner), null)
     push(pad('Arma', inner), C.white)
     push(pad(` ${weaponDef.name}`, inner), C.brightYellow)
     push(pad(` Municion: ${ammo}`, inner), DIM + C.brightYellow)
@@ -322,8 +481,8 @@ class TerminalRenderer {
     if (world.boss) {
       const pct = Math.max(0, Math.round((world.boss.hp / world.boss.maxHp) * 12))
       push(pad('', inner), null)
-      push(pad(`Jefe: ${world.boss.name}`, inner), BOLD + C.brightMagenta)
-      push(pad(`[${'█'.repeat(pct)}${'░'.repeat(12 - pct)}]`, inner), C.brightRed)
+      push(pad(`Jefe: ${world.boss.name}`, inner), bossColor(world.boss))
+      push(pad(`[${'█'.repeat(pct)}${'░'.repeat(12 - pct)}]`, inner), bossColor(world.boss))
     }
 
     push(pad('', inner), null)

@@ -35,7 +35,15 @@ module.exports = {
       symbol: 'M',
       damage: 2
     })
-    const drone = asteroid.spawnAsteroid(rng, { x: boss.pos.x, y: boss.pos.y, tier: 'medium' })
+    // Spawns right on top of the boss, which can be right on top of the
+    // player at close range — grace period stops it from landing an
+    // invisible hit the instant it appears.
+    const drone = asteroid.spawnAsteroid(rng, {
+      x: boss.pos.x,
+      y: boss.pos.y,
+      tier: 'medium',
+      spawnGraceMs: asteroid.SPAWN_GRACE_MS
+    })
     return [...shots, drone]
   }
 }

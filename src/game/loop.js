@@ -56,9 +56,10 @@ function startGame({ rng, onExit }) {
           return
         }
         if (action === 'play') {
+          const difficulty = menu.difficulty.id
           clearInterval(timer)
           input.resetHeld()
-          runGame()
+          runGame(difficulty)
           return
         }
         renderer.renderMenu(menu)
@@ -69,9 +70,9 @@ function startGame({ rng, onExit }) {
     }, TICK_MS)
   }
 
-  function runGame() {
+  function runGame(difficulty) {
     const { width, height } = renderer.arenaSize()
-    const world = new World({ rng, width, height })
+    const world = new World({ rng, width, height, difficulty })
     if (pendingStatus) world.setStatus(pendingStatus)
     controller.setStatus = (message) => world.setStatus(message)
 
