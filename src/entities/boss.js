@@ -17,6 +17,9 @@ function spawnBoss(def, { x, y, wave = 1, hpMultiplier = 1 }) {
     pos: { x, y },
     vel: { x: 0, y: 0 },
     radius: def.radius,
+    // Kept on the entity so attack helpers (see _helpers.js) can scale
+    // bullet spread/count with the same wave number that scaled hp.
+    wave,
     maxHp,
     hp: maxHp,
     phase: 0,

@@ -19,7 +19,7 @@ module.exports = {
     boss.pos.x = Math.max(boss.radius, Math.min(world.width - boss.radius, boss.pos.x))
   },
 
-  attack({ boss, player, rng }) {
+  attack({ boss, player, world, rng }) {
     const drones = []
     for (let i = 0; i < 3; i++) {
       const drone = asteroid.spawnAsteroid(rng, {
@@ -29,7 +29,10 @@ module.exports = {
         // Drones hatch right next to the boss, which can be right next to
         // the player if they're fighting up close — without this they can
         // materialize already touching the ship and deal an invisible hit.
-        spawnGraceMs: asteroid.SPAWN_GRACE_MS
+        spawnGraceMs: asteroid.SPAWN_GRACE_MS,
+        // Hatch at the current wave so late-game drones are as tanky as
+        // the wave enemies they imitate.
+        wave: Math.max(1, world.wave)
       })
       const angle = Math.atan2(player.pos.y - drone.pos.y, player.pos.x - drone.pos.x)
       const speed = 3

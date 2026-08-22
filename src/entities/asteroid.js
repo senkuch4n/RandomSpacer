@@ -13,9 +13,18 @@ const TIERS = {
   small: { radius: 1, hp: 1, symbol: '░', splitInto: null, splitCount: 0 }
 }
 
+// Enemies get tankier every cleared wave: hp grows by this factor per wave
+// above 1 (same curve the bosses use), so late waves can't be chewed
+// through at wave-1 speeds.
+const HP_PER_WAVE = 0.3
+
+function tierHp(tier, wave = 1) {
+  return Math.max(1, Math.round(TIERS[tier].hp * (1 + HP_PER_WAVE * (wave - 1))))
+}
+
 let nextId = 1
 
-function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle, spawnGraceMs = 0 }) {
+function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle, spawnGraceMs = 0, wave = 1 }) {
   const def = TIERS[tier]
   const dir = angle ?? rng.angle()
   const mag = speed ?? rng.range(1, 3)
@@ -27,10 +36,12 @@ function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle, spawnGraceMs =
     pos: { x, y },
     vel: vector.fromAngle(dir, mag),
     radius: def.radius,
-    hp: def.hp,
+    hp: tierHp(tier, wave),
     symbol: def.symbol,
     spin: rng.range(-1, 1),
-    spawnGraceMs
+    spawnGraceMs,
+    // Remembered so fragments spawned by split() inherit the same scaling.
+    wave
   }
 }
 
@@ -84,11 +95,12 @@ function split(rng, asteroid) {
         y: asteroid.pos.y,
         tier: def.splitInto,
         speed: rng.range(2, 4),
-        spawnGraceMs: SPAWN_GRACE_MS
+        spawnGraceMs: SPAWN_GRACE_MS,
+        wave: asteroid.wave
       })
     )
   }
   return fragments
 }
 
-module.exports = { TIERS, spawnAsteroid, spawnAtEdge, split, SPAWN_GRACE_MS }
+module.exports = { TIERS, tierHp, spawnAsteroid, spawnAtEdge, split, SPAWN_GRACE_MS }

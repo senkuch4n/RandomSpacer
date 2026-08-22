@@ -3,6 +3,10 @@ const { createCongruential } = require('../src/engine/congruential.js')
 const { createRng } = require('../src/engine/rng.js')
 const enemyGenerator = require('../src/game/enemyGenerator.js')
 const experience = require('../src/game/experience.js')
+const asteroidApi = require('../src/entities/asteroid.js')
+const helpers = require('../src/bosses/_helpers.js')
+const bosses = require('../src/bosses/index.js')
+const { World } = require('../src/game/world.js')
 
 test('congruential yields floats in [0, 1)', (t) => {
   const next = createCongruential(12345)
@@ -203,4 +207,69 @@ test('enemy generator: matchStart holds enemies back and drops them at the edges
     lastDelay = e.delayMs
   }
   t.pass()
+})
+
+test('enemies: hp scales with the wave and fragments inherit it', (t) => {
+  const rng = createRng({ source: createCongruential(11) })
+
+  const early = asteroidApi.spawnAsteroid(rng, { x: 0, y: 0, tier: 'large', speed: 1 })
+  const late = asteroidApi.spawnAsteroid(rng, { x: 0, y: 0, tier: 'large', speed: 1, wave: 6 })
+  t.is(early.hp, asteroidApi.TIERS.large.hp)
+  t.is(late.hp, asteroidApi.tierHp('large', 6))
+  t.is(late.hp > early.hp, true)
+
+  const fragments = asteroidApi.split(rng, late)
+  t.is(fragments.length, asteroidApi.TIERS.large.splitCount)
+  for (const f of fragments) {
+    if (f.hp !== asteroidApi.tierHp(f.tier, 6)) {
+      t.fail(`fragment hp not wave-scaled: ${f.hp} for tier ${f.tier}`)
+      return
+    }
+  }
+  t.pass()
+})
+
+test('bosses: bullet fans add bullets and widen with the wave', (t) => {
+  const boss = { pos: { x: 10, y: 5 } }
+  const player = { pos: { x: 50, y: 20 } }
+  const opts = { count: 5, spreadRad: Math.PI / 2 }
+
+  const w1 = helpers.fireSpread({ ...boss, wave: 1 }, player, opts)
+  const w9 = helpers.fireSpread({ ...boss, wave: 9 }, player, opts)
+
+  // +floor((9-1)/2) extra bullets on top of the base fan
+  t.is(w1.length, 5)
+  t.is(w9.length, 9)
+  t.is(helpers.spreadPressure(1).extraCount, 0)
+  t.is(helpers.spreadPressure(3).extraCount, 1)
+
+  const span = (shots) => {
+    const angles = shots.map((s) => Math.atan2(s.vel.y, s.vel.x)).sort((a, b) => a - b)
+    return angles[angles.length - 1] - angles[0]
+  }
+  t.is(span(w9) > span(w1), true)
+})
+
+test('world: clearing every enemy bumps the counter and summons a scaled boss', (t) => {
+  const world = new World({
+    rng: createRng({ source: createCongruential(2024) }),
+    width: ARENA.width,
+    height: ARENA.height,
+    difficulty: 'normal'
+  })
+  t.is(world.wave, 1)
+
+  world.pendingEnemies = []
+  world.asteroids = []
+  world.update(16, {})
+
+  t.is(world.wave, 2)
+  if (!world.boss) {
+    t.fail('no boss spawned after clearing the arena')
+    return
+  }
+
+  const baseHp = bosses.byId(world.boss.defId).baseHp
+  t.is(world.boss.wave, 2)
+  t.is(world.boss.maxHp, Math.round(baseHp * (1 + 0.35 * (world.boss.wave - 1))))
 })

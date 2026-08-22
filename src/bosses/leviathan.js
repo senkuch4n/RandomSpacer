@@ -42,7 +42,9 @@ module.exports = {
       x: boss.pos.x,
       y: boss.pos.y,
       tier: 'medium',
-      spawnGraceMs: asteroid.SPAWN_GRACE_MS
+      spawnGraceMs: asteroid.SPAWN_GRACE_MS,
+      // Scales with the current wave, same as the boss's own hp.
+      wave: Math.max(1, world.wave)
     })
     return [...shots, drone]
   }
