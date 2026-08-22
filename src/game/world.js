@@ -376,9 +376,10 @@ class World {
     const p = this.player
     for (const a of this.asteroids) {
       if (a.hp <= 0) continue
-      // Fragments from a kill made this same tick (e.g. a bomb popped an
-      // asteroid right next to the ship) get a brief grace window so the
-      // player's own weapon can't tag them with the shrapnel.
+      // Anything that just materialized this tick (split fragments from a
+      // point-blank kill, or a boss drone hatched next to a player fighting
+      // up close) gets a brief grace window so it can't land a hit the
+      // instant it appears, before the player could possibly react.
       if (a.spawnGraceMs > 0) continue
       if (vector.distance(p.pos, a.pos) <= p.radius + a.radius) {
         shipApi.hit(p)

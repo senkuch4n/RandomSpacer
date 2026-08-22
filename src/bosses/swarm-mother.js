@@ -25,7 +25,11 @@ module.exports = {
       const drone = asteroid.spawnAsteroid(rng, {
         x: boss.pos.x + rng.range(-2, 2),
         y: boss.pos.y + rng.range(-1, 1),
-        tier: 'small'
+        tier: 'small',
+        // Drones hatch right next to the boss, which can be right next to
+        // the player if they're fighting up close — without this they can
+        // materialize already touching the ship and deal an invisible hit.
+        spawnGraceMs: asteroid.SPAWN_GRACE_MS
       })
       const angle = Math.atan2(player.pos.y - drone.pos.y, player.pos.x - drone.pos.x)
       const speed = 3
