@@ -107,6 +107,64 @@ class TerminalRenderer {
     this.out.end('\x1b[?25h\x1b[2J\x1b[H', () => this.out.destroy())
   }
 
+  renderMenu(menu) {
+    const cols = this.columns
+    const rows = this.rows
+    const width = Math.min(50, Math.max(30, cols - 4))
+    const inner = width - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('✦ RANDOMSPACE ✦', BOLD + C.brightCyan)
+    pushCentered(`v${pkg.version}`, DIM + C.gray)
+    push('', null)
+
+    if (menu.screen === 'controls') {
+      push(' Controles', BOLD + C.white)
+      push('', null)
+      push('  WASD     mover', DIM + C.gray)
+      push('  Espacio  disparar', DIM + C.gray)
+      push('  E        cambiar arma', DIM + C.gray)
+      push('  X        habilidad', DIM + C.gray)
+      push('  Q        salir', DIM + C.gray)
+      push('', null)
+      pushCentered('Espacio para volver', C.brightCyan)
+    } else {
+      for (let i = 0; i < menu.items.length; i++) {
+        const item = menu.items[i]
+        const isSelected = i === menu.selected
+        const pointer = isSelected && blinkOn ? '▶ ' : '  '
+        push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
+      }
+      push('', null)
+      pushCentered('W/S mover · Espacio elegir · Q salir', DIM + C.gray)
+    }
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+
+    const top = Math.max(0, Math.floor((rows - lines.length) / 2))
+    const left = Math.max(0, Math.floor((cols - width) / 2))
+
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    for (let r = 0; r < lines.length && top + r < rows; r++) {
+      const { text, color } = lines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
   render(world) {
     const cols = this.columns
     const rows = this.rows
