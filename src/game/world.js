@@ -22,6 +22,9 @@ const BOSS_DEATH_EFFECT_MS = 700
 const LEVEL_UP_BANNER_MS = 1600
 const ITEM_CHOICE_LEVEL_INTERVAL = 1 // offer a pick every N levels
 const ITEM_CHOICE_OPTIONS = 3
+// Why a pick was offered — drives the modal's title in the renderer.
+const ITEM_CHOICE_LEVEL_UP = 'level-up'
+const ITEM_CHOICE_BOSS_KILL = 'boss-kill'
 const MULTISHOT_SPREAD_RAD = 0.12 // angle between adjacent multishot bullets
 
 function steerToward(vel, targetAngle, maxTurn) {
@@ -59,7 +62,7 @@ class World {
     this.experience = experienceApi.create()
     this.levelUpMs = 0
     this.itemChoice = null
-    this._queuedItemChoices = 0
+    this._queuedItemChoices = []
     this.wave = 1
     this.gameOver = false
     this.gameOverChoice = null
@@ -546,7 +549,9 @@ class World {
 
   // Offers ITEM_CHOICE_OPTIONS unique random items from the field pool —
   // a partial Fisher-Yates shuffle so there are no duplicate options.
-  _openItemChoice() {
+  // `reason` tags why the pick was offered (level-up vs boss loot) so the
+  // renderer can title the modal accordingly.
+  _openItemChoice(reason = ITEM_CHOICE_LEVEL_UP) {
     // Mixes new weapons/abilities/pickups with stat upgrades (excluding
     // any already maxed out — see upgrades.js's isAvailable) into one
     // pool, so a level-up can offer either kind of reward.
@@ -559,10 +564,19 @@ class World {
     this.itemChoice = {
       options: pool.slice(0, n),
       selected: 0,
+      reason,
       _prevUp: false,
       _prevDown: false,
       _prevConfirm: false
     }
+  }
+
+  // Shows a pick now, or queues it behind whichever modal is currently
+  // open, so e.g. a boss kill and the level-ups its XP grants don't
+  // overwrite each other's pending picks.
+  _queueItemChoice(reason) {
+    if (this.itemChoice) this._queuedItemChoices.push(reason)
+    else this._openItemChoice(reason)
   }
 
   // Edge-triggered nav/confirm, same pattern as menu.js — input.up/down/
@@ -588,9 +602,8 @@ class World {
       this._applyItemToPlayer(def)
       this.setStatus(`Elegiste: ${def.name}`)
       this.itemChoice = null
-      if (this._queuedItemChoices > 0) {
-        this._queuedItemChoices -= 1
-        this._openItemChoice()
+      if (this._queuedItemChoices.length > 0) {
+        this._openItemChoice(this._queuedItemChoices.shift())
       }
     }
   }
@@ -608,6 +621,9 @@ class World {
     const levelBefore = this.experience.level
     experienceApi.grant(this.experience, experienceApi.BOSS_XP_PERCENT)
     this._announceLevelUps(levelBefore)
+    // Boss kill loot: on top of score + XP, every defeated boss offers an
+    // item pick (queued behind any level-up picks its XP just opened).
+    this._queueItemChoice(ITEM_CHOICE_BOSS_KILL)
     this.setStatus(`${this.boss.name} derrotado`)
     this.boss = null
     this.wave += 1
@@ -631,8 +647,10 @@ class World {
         Math.floor(this.experience.level / ITEM_CHOICE_LEVEL_INTERVAL) -
         Math.floor(levelBefore / ITEM_CHOICE_LEVEL_INTERVAL)
       if (thresholdsCrossed > 0) {
-        this._queuedItemChoices += thresholdsCrossed - 1
-        this._openItemChoice()
+        for (let i = 1; i < thresholdsCrossed; i++) {
+          this._queuedItemChoices.push(ITEM_CHOICE_LEVEL_UP)
+        }
+        this._queueItemChoice(ITEM_CHOICE_LEVEL_UP)
       }
     }
   }

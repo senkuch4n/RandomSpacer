@@ -50,6 +50,12 @@ const DIFFICULTY_COLORS = { easy: C.brightGreen, normal: C.brightCyan, hard: C.b
 // Same semantics as DIFFICULTY_COLORS, reused for the item-choice modal's
 // per-type row colors (weapon/ability/plain pickup).
 const ITEM_TYPE_COLORS = { weapon: C.brightYellow, ability: C.brightGreen, pickup: C.brightRed }
+// Modal title per pick reason (world.js tags each item choice with why it
+// was offered); level-up is the fallback for any unknown reason.
+const ITEM_CHOICE_TITLES = {
+  'level-up': { text: '¡SUBISTE DE NIVEL!', color: BOLD + C.brightGreen },
+  'boss-kill': { text: '¡JEFE DERROTADO!', color: BOLD + C.brightMagenta }
+}
 
 function bossColor(boss) {
   return (boss && BOSS_COLORS[boss.defId]) || BOSS_COLOR
@@ -447,7 +453,8 @@ class TerminalRenderer {
     const push = (text, color) => body.push({ text: pad(text, inner), color })
     const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
 
-    pushCentered('¡SUBISTE DE NIVEL!', BOLD + C.brightGreen)
+    const title = ITEM_CHOICE_TITLES[choice.reason] || ITEM_CHOICE_TITLES['level-up']
+    pushCentered(title.text, title.color)
     pushCentered('Elegí un objeto', DIM + C.gray)
     push('', null)
     for (let i = 0; i < choice.options.length; i++) {
