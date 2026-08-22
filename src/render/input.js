@@ -33,7 +33,10 @@ class InputManager {
     try {
       this.stdin.setRawMode(false)
     } catch {}
-    this.stdin.pause?.()
+    // An open bare-tty ReadStream keeps the event loop alive on its own,
+    // so without destroying it the process (and the terminal) never
+    // regains control after the game exits.
+    this.stdin.destroy()
   }
 
   _mark(key) {
