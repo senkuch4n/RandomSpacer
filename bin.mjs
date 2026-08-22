@@ -79,6 +79,17 @@ process.on('SIGINT', () => shutdown(130))
 process.on('SIGQUIT', () => shutdown(131))
 process.on('SIGTERM', () => shutdown(143))
 
+// A crash anywhere outside the game tick (loop.js guards the tick itself)
+// would otherwise kill the process while raw mode + hidden cursor are
+// still set on the terminal — the shell looks dead until the user
+// blind-types `reset`. Always restore the terminal before going down.
+process.on('uncaughtException', (err) => {
+  shutdown(1).finally(() => console.error('[fatal]', err))
+})
+process.on('unhandledRejection', (err) => {
+  shutdown(1).finally(() => console.error('[fatal]', err))
+})
+
 try {
   await app.ready()
 

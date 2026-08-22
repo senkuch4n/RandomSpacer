@@ -4,7 +4,9 @@ const tty = require('bare-tty')
 const items = require('../items')
 
 const HUD_ROWS = 3
-const SHIP_GLYPHS = ['>', '\\', 'v', '/', '<', '\\', '^', '/']
+// Single-width Unicode arrows read as a ship's facing direction much more
+// clearly than plain ASCII slashes, without needing a multi-cell sprite.
+const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
 
 // The arena is capped well below typical terminal size so weapon ranges
 // (tuned in src/entities/bullet.js) are enough to cross it — a maximized

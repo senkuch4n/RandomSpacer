@@ -44,8 +44,17 @@ function startGame({ rng, onExit }) {
     const dtMs = Math.min(200, now - lastTick)
     lastTick = now
 
-    world.update(dtMs, input.snapshot())
-    renderer.render(world)
+    // A crash mid-tick must not skip cleanup — raw mode + hidden cursor
+    // left on the terminal survives the process, so the shell looks dead
+    // until the user blind-types `reset`. Restore the terminal first,
+    // then surface the error.
+    try {
+      world.update(dtMs, input.snapshot())
+      renderer.render(world)
+    } catch (err) {
+      stop(1)
+      console.error('[game:error]', err)
+    }
   }, TICK_MS)
 
   return {
