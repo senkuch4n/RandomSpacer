@@ -10,8 +10,7 @@ const experienceApi = require('./experience')
 const items = require('../items')
 const bosses = require('../bosses')
 
-const ROT_SPEED = Math.PI * 1.6 // rad/sec
-const THRUST_ACCEL = 14
+const THRUST_ACCEL = 22
 const DRAG = 0.985
 const MAX_SPEED = 20
 const PICKUP_INTERVAL_MS = [7000, 13000]
@@ -107,7 +106,7 @@ class World {
     this._updatePlayer(dt, dtMs, input)
     this._updateProjectiles(dt, dtMs)
     this._updateEnemySpawns(dtMs)
-    this._updateAsteroids(dt)
+    this._updateAsteroids(dt, dtMs)
     this._updateBoss(dt, dtMs)
     this._updatePickups(dtMs)
     this._updateEffects(dtMs)
@@ -120,13 +119,21 @@ class World {
   _updatePlayer(dt, dtMs, input) {
     const p = this.player
 
-    if (input.left) p.angle -= ROT_SPEED * dt
-    if (input.right) p.angle += ROT_SPEED * dt
+    // Twin-stick style: WASD/arrows move the ship directly in that
+    // screen direction — no separate rotate-then-thrust step. The ship
+    // faces wherever it's currently moving and holds that facing (for
+    // aiming/rendering) once input stops, rather than snapping back.
+    let dx = (input.right ? 1 : 0) - (input.left ? 1 : 0)
+    let dy = (input.down ? 1 : 0) - (input.up ? 1 : 0)
+    p.thrusting = dx !== 0 || dy !== 0
 
-    p.thrusting = Boolean(input.thrust)
     if (p.thrusting) {
-      p.vel.x += Math.cos(p.angle) * THRUST_ACCEL * dt
-      p.vel.y += Math.sin(p.angle) * THRUST_ACCEL * dt
+      const len = Math.hypot(dx, dy)
+      dx /= len
+      dy /= len
+      p.angle = Math.atan2(dy, dx)
+      p.vel.x += dx * THRUST_ACCEL * dt
+      p.vel.y += dy * THRUST_ACCEL * dt
     }
 
     p.vel.x *= DRAG
@@ -230,9 +237,10 @@ class World {
     return null
   }
 
-  _updateAsteroids(dt) {
+  _updateAsteroids(dt, dtMs) {
     for (const a of this.asteroids) {
       a.pos = vector.wrap(vector.add(a.pos, vector.scale(a.vel, dt)), this.width, this.height)
+      if (a.spawnGraceMs > 0) a.spawnGraceMs = Math.max(0, a.spawnGraceMs - dtMs)
     }
   }
 
@@ -368,6 +376,10 @@ class World {
     const p = this.player
     for (const a of this.asteroids) {
       if (a.hp <= 0) continue
+      // Fragments from a kill made this same tick (e.g. a bomb popped an
+      // asteroid right next to the ship) get a brief grace window so the
+      // player's own weapon can't tag them with the shrapnel.
+      if (a.spawnGraceMs > 0) continue
       if (vector.distance(p.pos, a.pos) <= p.radius + a.radius) {
         shipApi.hit(p)
         a.hp = 0

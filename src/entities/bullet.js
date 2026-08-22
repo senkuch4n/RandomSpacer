@@ -11,7 +11,7 @@ function spawnProjectile({
   symbol = '*',
   damage = 1,
   radius = 0.5,
-  ttlMs = 2500, // default gives a speed-12 shot ~30 units of range — enough to cross the (smaller) arena
+  ttlMs = 4500, // default gives a speed-12 shot ~54 units of range — enough to cross the arena
   blastRadius = 0, // > 0: explodes on impact/expiry, damaging everything in range
   homing = false, // true: steers toward homingTargetId each tick (missile)
   homingTargetId = null,
