@@ -4,7 +4,13 @@ const { World } = require('./world')
 const { TerminalRenderer } = require('../render/terminal')
 const { InputManager } = require('../render/input')
 const { createMenu } = require('./menu')
-const { CoopSession } = require('../net/coop')
+const {
+  CoopSession,
+  generateCode,
+  formatCodeForDisplay,
+  normalizeCode,
+  topicFromCode
+} = require('../net/coop')
 
 const TICK_MS = 40 // 25 fps — plenty for an ASCII arena, cheap to redraw
 
@@ -84,11 +90,25 @@ function startGame({ rng, onExit }) {
           runGame(difficulty)
           return
         }
-        if (action === 'coop') {
+        if (action === 'coop-auto') {
           const difficulty = menu.difficulty.id
           clearInterval(timer)
           input.resetHeld()
           runCoopSearch(difficulty)
+          return
+        }
+        if (action === 'coop-host') {
+          const difficulty = menu.difficulty.id
+          clearInterval(timer)
+          input.resetHeld()
+          runCoopHostCode(difficulty)
+          return
+        }
+        if (action === 'coop-join') {
+          const difficulty = menu.difficulty.id
+          clearInterval(timer)
+          input.resetHeld()
+          runCoopJoinCode(difficulty)
           return
         }
         renderer.renderMenu(menu)
@@ -144,14 +164,19 @@ function startGame({ rng, onExit }) {
     }, TICK_MS)
   }
 
-  // Co-op: joins a public Hyperswarm lobby (see src/net/coop.js) so two
-  // players get matched up automatically, with no room code or manual key
-  // exchange — that's the "assigned randomly" part. Whichever peer's
-  // connection role comes out on top (a deterministic public-key compare
-  // both sides make independently) runs the real World and is
-  // authoritative; the other just sends its input and renders whatever
-  // state it's told. Q always quits the whole app, same as everywhere
-  // else, including while still searching.
+  // Co-op ("Automático"): joins a public Hyperswarm lobby (see
+  // src/net/coop.js) so two players get matched up automatically, with no
+  // room code or manual key exchange — that's the "assigned randomly"
+  // part. Whichever peer's connection role comes out on top (a
+  // deterministic public-key compare both sides make independently) runs
+  // the real World and is authoritative; the other just sends its input
+  // and renders whatever state it's told. Q always quits the whole app,
+  // same as everywhere else, including while still searching. Relies on
+  // the DHT actually punching a hole between both players' networks — if
+  // that fails (some NAT/firewall setups), "Crear partida"/"Unirse con
+  // código" below use the same connection mechanism on a private topic,
+  // which at least guarantees the two players are looking for each other
+  // specifically rather than depending on who else is in the public lobby.
   function runCoopSearch(difficulty) {
     currentSetStatus = (message) => {
       pendingStatus = message
@@ -183,6 +208,121 @@ function startGame({ rng, onExit }) {
       console.error('[coop-search:error]', err)
       session.close().catch(() => {})
       pendingStatus = 'No se pudo buscar compañero — reintenta'
+      runMenu()
+    })
+  }
+
+  // Co-op ("Crear partida"): generates a short code and joins a topic
+  // derived from it (private, not the public lobby) — sharing that code
+  // with the other player (out of band: voice, chat, whatever) is what
+  // gets them onto the same topic instead of leaving it to chance.
+  function runCoopHostCode(difficulty) {
+    currentSetStatus = (message) => {
+      pendingStatus = message
+    }
+    const code = generateCode()
+    const session = new CoopSession()
+    let settled = false
+
+    session.onConnected = (isHost) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      if (isHost) runCoopHost(difficulty, session)
+      else runCoopGuest(session)
+    }
+
+    timer = setInterval(() => {
+      try {
+        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+      } catch (err) {
+        stop(1)
+        console.error('[coop-host-code:error]', err)
+      }
+    }, TICK_MS)
+
+    session.findMatch(topicFromCode(code)).catch((err) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-host-code:error]', err)
+      session.close().catch(() => {})
+      pendingStatus = 'No se pudo crear la partida — reintenta'
+      runMenu()
+    })
+  }
+
+  // Co-op ("Unirse con código"): a text-entry screen collects the code
+  // the other player shared, then joins the same private topic it maps
+  // to. Enter submits, Esc goes back to the menu (both handled here via
+  // InputManager's text-capture mode rather than the normal key bindings,
+  // so e.g. typing "q" doesn't quit mid-code).
+  function runCoopJoinCode(difficulty) {
+    currentSetStatus = (message) => {
+      pendingStatus = message
+    }
+    input.startTextInput('')
+    let joinError = null
+    let settled = false
+
+    input.onTextCancel = () => {
+      if (settled) return
+      settled = true
+      input.stopTextInput()
+      clearInterval(timer)
+      runMenu()
+    }
+    input.onTextSubmit = (typed) => {
+      if (settled) return
+      const code = normalizeCode(typed)
+      if (code.length !== 8) {
+        joinError = 'El código debe tener 8 caracteres'
+        return
+      }
+      settled = true
+      input.stopTextInput()
+      clearInterval(timer)
+      runCoopJoinConnecting(difficulty, code)
+    }
+
+    timer = setInterval(() => {
+      try {
+        renderer.renderCoopJoin(input.textBuffer, joinError)
+      } catch (err) {
+        stop(1)
+        console.error('[coop-join-code:error]', err)
+      }
+    }, TICK_MS)
+  }
+
+  function runCoopJoinConnecting(difficulty, code) {
+    const session = new CoopSession()
+    let settled = false
+
+    session.onConnected = (isHost) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      if (isHost) runCoopHost(difficulty, session)
+      else runCoopGuest(session)
+    }
+
+    timer = setInterval(() => {
+      try {
+        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+      } catch (err) {
+        stop(1)
+        console.error('[coop-join-connecting:error]', err)
+      }
+    }, TICK_MS)
+
+    session.findMatch(topicFromCode(code)).catch((err) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-join-connecting:error]', err)
+      session.close().catch(() => {})
+      pendingStatus = 'No se pudo conectar con ese código'
       runMenu()
     })
   }

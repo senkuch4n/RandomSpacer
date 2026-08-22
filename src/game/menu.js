@@ -11,11 +11,23 @@ function createMenu() {
     screen: 'main',
     items: [
       { id: 'play', label: 'Jugar' },
-      { id: 'coop', label: 'Cooperativo' },
+      { id: 'coop', label: 'Cooperativo', screen: 'coop' },
       { id: 'controls', label: 'Controles', screen: 'controls' },
       { id: 'quit', label: 'Salir' }
     ],
+    // The public-lobby "Automático" match relies on Hyperswarm's DHT
+    // punching a hole between both players' networks, which doesn't
+    // always succeed depending on NAT/firewall setups — "Crear
+    // partida"/"Unirse con código" let two players pair deliberately on a
+    // private topic instead (same underlying mechanism, just not left to
+    // chance who else is in the public lobby).
+    coopItems: [
+      { id: 'coop-auto', label: 'Automático (aleatorio)' },
+      { id: 'coop-host', label: 'Crear partida' },
+      { id: 'coop-join', label: 'Unirse con código' }
+    ],
     selected: 0,
+    coopSelected: 0,
     difficultyIndex: difficultyApi.DEFAULT_INDEX,
     _prevUp: false,
     _prevDown: false,
@@ -27,10 +39,11 @@ function createMenu() {
       return difficultyApi.LEVELS[this.difficultyIndex]
     },
 
-    // Returns 'play' or 'quit' when the player confirms that action,
-    // otherwise null (including while just browsing a sub-screen like
-    // Controles). Credits are shown as a permanent footer on the main
-    // screen instead of a sub-screen — see terminal.js renderMenu.
+    // Returns 'play', 'quit', or one of coopItems' ids when the player
+    // confirms that action, otherwise null (including while just
+    // browsing a sub-screen like Controles). Credits are shown as a
+    // permanent footer on the main screen instead of a sub-screen — see
+    // terminal.js renderMenu.
     update(input) {
       const upEdge = input.up && !this._prevUp
       const downEdge = input.down && !this._prevDown
@@ -43,6 +56,18 @@ function createMenu() {
       this._prevLeft = input.left
       this._prevRight = input.right
       this._prevConfirm = confirmHeld
+
+      if (this.screen === 'coop') {
+        const n = this.coopItems.length
+        if (upEdge) this.coopSelected = (this.coopSelected - 1 + n) % n
+        if (downEdge) this.coopSelected = (this.coopSelected + 1) % n
+        if (leftEdge) {
+          this.screen = 'main'
+          return null
+        }
+        if (confirmEdge) return this.coopItems[this.coopSelected].id
+        return null
+      }
 
       if (this.screen !== 'main') {
         if (confirmEdge) this.screen = 'main'
