@@ -5,8 +5,12 @@ const tty = require('bare-tty')
 // A raw terminal never reports key-up events, only bytes as they arrive
 // (with OS auto-repeat while a key is held). So "is this key held right
 // now" is approximated as "did we see it in the last HOLD_TIMEOUT_MS" —
-// the standard trick for real-time terminal games.
-const HOLD_TIMEOUT_MS = 150
+// the standard trick for real-time terminal games. This has to be longer
+// than the OS's initial key-repeat delay (commonly 250-500ms before the
+// first repeat, then much faster) or movement visibly stutters: the
+// window expires and the ship stops turning/thrusting for a beat right
+// before the next repeated byte arrives.
+const HOLD_TIMEOUT_MS = 400
 
 const ARROW = { A: 'up', B: 'down', C: 'right', D: 'left' }
 

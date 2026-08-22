@@ -64,7 +64,9 @@ class World {
   _spawnWave() {
     const count = ASTEROIDS_BASE_COUNT + this.wave - 1
     for (let i = 0; i < count; i++) {
-      this.asteroids.push(asteroidApi.spawnAtEdge(this.rng, this.width, this.height))
+      this.asteroids.push(
+        asteroidApi.spawnAtEdge(this.rng, this.width, this.height, this.player.pos)
+      )
     }
   }
 

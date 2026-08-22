@@ -11,9 +11,9 @@ const TIERS = {
 
 let nextId = 1
 
-function spawnAsteroid(rng, { x, y, tier = 'large', speed }) {
+function spawnAsteroid(rng, { x, y, tier = 'large', speed, angle }) {
   const def = TIERS[tier]
-  const angle = rng.angle()
+  const dir = angle ?? rng.angle()
   const mag = speed ?? rng.range(1, 3)
 
   return {
@@ -21,7 +21,7 @@ function spawnAsteroid(rng, { x, y, tier = 'large', speed }) {
     kind: 'asteroid',
     tier,
     pos: { x, y },
-    vel: vector.fromAngle(angle, mag),
+    vel: vector.fromAngle(dir, mag),
     radius: def.radius,
     hp: def.hp,
     symbol: def.symbol,
@@ -29,8 +29,12 @@ function spawnAsteroid(rng, { x, y, tier = 'large', speed }) {
   }
 }
 
-// Spawns a large asteroid at a random edge of the arena, aimed roughly inward.
-function spawnAtEdge(rng, width, height, tier = 'large') {
+const EDGE_AIM_SPREAD = Math.PI / 6 // +/- 30 degrees of jitter around the aim point
+
+// Spawns a large asteroid at a random edge of the arena, aimed at `target`
+// (typically the player) with some spread so they visibly close in instead
+// of drifting in a random direction.
+function spawnAtEdge(rng, width, height, target, tier = 'large') {
   const side = rng.int(0, 3)
   let x, y
   if (side === 0) {
@@ -47,7 +51,8 @@ function spawnAtEdge(rng, width, height, tier = 'large') {
     y = height
   }
 
-  return spawnAsteroid(rng, { x, y, tier })
+  const aim = Math.atan2(target.y - y, target.x - x) + rng.range(-EDGE_AIM_SPREAD, EDGE_AIM_SPREAD)
+  return spawnAsteroid(rng, { x, y, tier, angle: aim })
 }
 
 // On destruction, large/medium asteroids break into smaller ones.
