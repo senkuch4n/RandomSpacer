@@ -41,7 +41,7 @@ module.exports = {
         vel: vector.fromAngle(player.angle, 8),
         symbol: '^',
         damage: 2,
-        ttlMs: 3000,
+        ttlMs: 4500,
         homing: Boolean(target),
         homingTargetId: target ? target.id : null,
         homingTargetKind: target ? target.kind : null,

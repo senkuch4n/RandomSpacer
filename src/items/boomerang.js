@@ -23,9 +23,9 @@ module.exports = {
         vel: vector.fromAngle(player.angle, 9),
         symbol: ')',
         damage: 1,
-        ttlMs: 2500,
+        ttlMs: 3500,
         boomerang: true,
-        maxRange: 12
+        maxRange: 18
       })
     ]
   }
