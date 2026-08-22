@@ -5,10 +5,12 @@ const shipApi = require('../entities/ship')
 const asteroidApi = require('../entities/asteroid')
 const { spawnPickup } = require('../entities/pickup')
 const { spawnBoss } = require('../entities/boss')
+const { spawnProjectile } = require('../entities/bullet')
 const enemyGenerator = require('./enemyGenerator')
 const experienceApi = require('./experience')
 const difficultyApi = require('./difficulty')
 const items = require('../items')
+const upgradesApi = require('../items/upgrades')
 const bosses = require('../bosses')
 
 const THRUST_ACCEL = 22
@@ -20,6 +22,7 @@ const BOSS_DEATH_EFFECT_MS = 700
 const LEVEL_UP_BANNER_MS = 1600
 const ITEM_CHOICE_LEVEL_INTERVAL = 1 // offer a pick every N levels
 const ITEM_CHOICE_OPTIONS = 3
+const MULTISHOT_SPREAD_RAD = 0.12 // angle between adjacent multishot bullets
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -243,10 +246,60 @@ class World {
     const outOfAmmo = !def.unlimitedAmmo && (p.ammo[weaponId] ?? 0) <= 0
     if (onCooldown || outOfAmmo) return
 
-    const shots = def.fire({ player: p, world: this, rng: this.rng })
+    const shots = this._applyWeaponUpgrades(
+      def,
+      def.fire({ player: p, world: this, rng: this.rng })
+    )
     this.projectiles.push(...shots)
-    p.cooldowns[weaponId] = def.cooldownMs
+    p.cooldowns[weaponId] = Math.round(def.cooldownMs * p.upgrades.cadenceMul)
     if (!def.unlimitedAmmo) p.ammo[weaponId] = (p.ammo[weaponId] ?? 0) - 1
+  }
+
+  // Applies the player's global damage/range multipliers to every shot a
+  // weapon fires, then — only for weapons marked multishotEligible (a
+  // single focused shot, e.g. main-shot/rifle, as opposed to an
+  // already-spread pattern like the shotgun) — expands a single shot into
+  // a small fan once the player has picked up the multishot upgrade.
+  _applyWeaponUpgrades(def, shots) {
+    const up = this.player.upgrades
+    let result = shots.map((s) => ({
+      ...s,
+      damage: Math.max(1, Math.round(s.damage * up.damageMul)),
+      ttlMs: Math.round(s.ttlMs * up.rangeMul)
+    }))
+    if (def.multishotEligible && up.extraShots > 0 && result.length === 1) {
+      result = this._expandMultishot(result[0], up.extraShots)
+    }
+    return result
+  }
+
+  // Turns one shot into 1 + extraShots, fanned out in alternating steps
+  // around the original angle (e.g. extraShots=3 -> 4 bullets total, the
+  // requested cap). Reuses spawnProjectile (rather than cloning `base`)
+  // so each new bullet gets its own id instead of duplicating the
+  // original's.
+  _expandMultishot(base, extraShots) {
+    const angleBase = Math.atan2(base.vel.y, base.vel.x)
+    const speed = vector.length(base.vel)
+    const shots = [base]
+    for (let i = 1; i <= extraShots; i++) {
+      const side = i % 2 === 1 ? 1 : -1
+      const step = Math.ceil(i / 2)
+      const angle = angleBase + side * step * MULTISHOT_SPREAD_RAD
+      shots.push(
+        spawnProjectile({
+          pos: base.pos,
+          vel: vector.fromAngle(angle, speed),
+          symbol: base.symbol,
+          damage: base.damage,
+          radius: base.radius,
+          ttlMs: base.ttlMs,
+          blastRadius: base.blastRadius,
+          owner: base.owner
+        })
+      )
+    }
+    return shots
   }
 
   _tryActivateAbility() {
@@ -494,7 +547,10 @@ class World {
   // Offers ITEM_CHOICE_OPTIONS unique random items from the field pool —
   // a partial Fisher-Yates shuffle so there are no duplicate options.
   _openItemChoice() {
-    const pool = [...items.FIELD_POOL]
+    // Mixes new weapons/abilities/pickups with stat upgrades (excluding
+    // any already maxed out — see upgrades.js's isAvailable) into one
+    // pool, so a level-up can offer either kind of reward.
+    const pool = [...items.FIELD_POOL, ...upgradesApi.availableFor(this.player)]
     const n = Math.min(ITEM_CHOICE_OPTIONS, pool.length)
     for (let i = 0; i < n; i++) {
       const j = this.rng.int(i, pool.length - 1)

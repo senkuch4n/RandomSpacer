@@ -497,6 +497,9 @@ class TerminalRenderer {
     push(pad('Arma', inner), C.white)
     push(pad(` ${weaponDef.name}`, inner), C.brightYellow)
     push(pad(` Municion: ${ammo}`, inner), DIM + C.brightYellow)
+    if (weaponDef.multishotEligible && p.upgrades.extraShots > 0) {
+      push(pad(` Balas: ${1 + p.upgrades.extraShots}`, inner), DIM + C.brightYellow)
+    }
 
     const abilityIds = [...p.abilities]
     if (abilityIds.length > 0) {

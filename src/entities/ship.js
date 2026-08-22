@@ -30,7 +30,18 @@ function createShip({ x, y, startLives = START_LIVES }) {
 
     // dedicated ability slot (shockwave), separate from the weapon cycle
     abilities: new Set(),
-    abilityCooldowns: Object.create(null)
+    abilityCooldowns: Object.create(null),
+
+    // Global weapon stat multipliers granted by items/upgrades.js —
+    // applied to every weapon's shots (damage/range/cadence), except
+    // extraShots which only weapons marked multishotEligible use. See
+    // world.js's _applyWeaponUpgrades.
+    upgrades: {
+      damageMul: 1,
+      rangeMul: 1,
+      cadenceMul: 1,
+      extraShots: 0
+    }
   }
 }
 
