@@ -21,6 +21,14 @@ function startGame({ rng, onExit }) {
   let stopped = false
   let pendingStatus = null
 
+  // Re-pointed at whichever World is currently live; while sitting on the
+  // menu (including after a "volver al menú" from a game over) there's no
+  // World to receive status text, so it's queued and flushed into the
+  // next one created.
+  let currentSetStatus = (message) => {
+    pendingStatus = message
+  }
+
   function stop(code) {
     if (stopped) return
     stopped = true
@@ -31,9 +39,7 @@ function startGame({ rng, onExit }) {
   }
 
   const controller = {
-    setStatus: (message) => {
-      pendingStatus = message
-    },
+    setStatus: (message) => currentSetStatus(message),
     stop
   }
 
@@ -42,6 +48,9 @@ function startGame({ rng, onExit }) {
   input.start()
 
   function runMenu() {
+    currentSetStatus = (message) => {
+      pendingStatus = message
+    }
     const menu = createMenu()
     let lastTick = Date.now()
 
@@ -74,7 +83,7 @@ function startGame({ rng, onExit }) {
     const { width, height } = renderer.arenaSize()
     const world = new World({ rng, width, height, difficulty })
     if (pendingStatus) world.setStatus(pendingStatus)
-    controller.setStatus = (message) => world.setStatus(message)
+    currentSetStatus = (message) => world.setStatus(message)
 
     let lastTick = Date.now()
 
@@ -95,6 +104,19 @@ function startGame({ rng, onExit }) {
       try {
         world.update(dtMs, input.snapshot())
         renderer.render(world)
+
+        // The World can't tear itself down/rebuild the renderer, so it
+        // just records the player's game-over choice — loop.js drives
+        // the actual transition back to the menu or into a fresh run.
+        if (world.gameOverAction === 'restart') {
+          clearInterval(timer)
+          input.resetHeld()
+          runGame(difficulty)
+        } else if (world.gameOverAction === 'menu') {
+          clearInterval(timer)
+          input.resetHeld()
+          runMenu()
+        }
       } catch (err) {
         stop(1)
         console.error('[game:error]', err)

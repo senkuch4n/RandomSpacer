@@ -8,14 +8,15 @@ const mainShot = require('./main-shot')
 const bomb = require('./bomb')
 const missile = require('./missile')
 const boomerang = require('./boomerang')
-const burstFire = require('./burst-fire')
+const shotgun = require('./shotgun')
+const rifle = require('./rifle')
 const shockwave = require('./shockwave')
 const life = require('./life')
 
 // Weapons cycle through the player's fire key (main-shot is always first
 // and always unlocked). Abilities sit on their own activation key.
 // `life` is neither — it applies on contact and is never equipped.
-const WEAPONS = [mainShot, bomb, missile, boomerang, burstFire]
+const WEAPONS = [mainShot, bomb, missile, boomerang, shotgun, rifle]
 const ABILITIES = [shockwave]
 const ALL = [...WEAPONS, ...ABILITIES, life]
 

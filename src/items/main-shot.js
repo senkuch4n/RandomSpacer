@@ -14,6 +14,7 @@ module.exports = {
   unlimitedAmmo: true,
   ammoPerPickup: 0,
   fieldPickup: false,
+  multishotEligible: true,
 
   fire({ player }) {
     return [

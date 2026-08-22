@@ -25,8 +25,6 @@ function colored(code, text) {
   return `${code}${text}${RESET}`
 }
 
-// One row below the arena is reserved for the experience bar.
-const XP_BAR_ROWS = 1
 // Single-width Unicode arrows read as a ship's facing direction much more
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
 const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
@@ -118,14 +116,18 @@ class TerminalRenderer {
 
   arenaSize() {
     const availWidth = Math.max(10, this.columns - PANEL_WIDTH - PANEL_GAP)
-    const availHeight = Math.max(5, this.rows - 2 - XP_BAR_ROWS)
+    const availHeight = Math.max(5, this.rows - 2)
     return {
       width: Math.min(MAX_ARENA_WIDTH, availWidth),
       height: Math.min(MAX_ARENA_HEIGHT, availHeight)
     }
   }
 
+  // Only one resize listener is ever needed at a time — clearing first
+  // means restarting a run (loop.js re-calling this for a fresh World)
+  // doesn't pile up listeners still pointing at discarded World objects.
   onResize(cb) {
+    this.out.removeAllListeners('resize')
     this.out.on('resize', cb)
   }
 
@@ -232,7 +234,7 @@ class TerminalRenderer {
     // a full-terminal-width grid so leftover content outside the arena is
     // blanked out every frame instead of lingering.
     const arenaW = Math.min(world.width, Math.max(1, cols - PANEL_WIDTH - PANEL_GAP))
-    const arenaH = Math.min(world.height, Math.max(1, rows - 2 - XP_BAR_ROWS))
+    const arenaH = Math.min(world.height, Math.max(1, rows - 2))
 
     const contentWidth = PANEL_WIDTH + PANEL_GAP + (arenaW + 2)
     const contentHeight = Math.max(panel.length, arenaH + 2)
@@ -380,28 +382,57 @@ class TerminalRenderer {
       }
     }
 
-    if (world.gameOver) {
-      plotBanner(
-        Math.floor(arenaH / 2),
-        ` GAME OVER — puntaje: ${world.player.score} — Q para salir `,
-        BOLD + C.brightRed
-      )
-    }
-
-    if (world.itemChoice) {
-      const modal = this._itemChoiceLines(world.itemChoice)
-      const modalTop = arenaTop + 1 + Math.max(0, Math.floor((arenaH - modal.length) / 2))
-      const modalWidth = modal[0].text.length
+    // Both the item-choice and game-over screens are boxed modals drawn
+    // centered over the (frozen) arena — same blit logic, different
+    // content, so it's factored out rather than duplicated per modal.
+    const blitModal = (lines) => {
+      const modalTop = arenaTop + 1 + Math.max(0, Math.floor((arenaH - lines.length) / 2))
+      const modalWidth = lines[0].text.length
       const modalLeft = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - modalWidth) / 2))
-      for (let r = 0; r < modal.length && modalTop + r < rows; r++) {
-        const { text, color } = modal[r]
+      for (let r = 0; r < lines.length && modalTop + r < rows; r++) {
+        const { text, color } = lines[r]
         for (let c = 0; c < text.length && modalLeft + c < cols; c++) {
           grid[modalTop + r][modalLeft + c] = color ? colored(color, text[c]) : text[c]
         }
       }
     }
 
+    if (world.itemChoice) blitModal(this._itemChoiceLines(world.itemChoice))
+    if (world.gameOver) blitModal(this._gameOverLines(world))
+
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  _gameOverLines(world) {
+    const width = 28
+    const inner = width - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+    const choice = world.gameOverChoice
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('GAME OVER', BOLD + C.brightRed)
+    pushCentered(`Puntaje: ${world.player.score}`, C.brightYellow)
+    push('', null)
+    if (choice) {
+      for (let i = 0; i < choice.options.length; i++) {
+        const opt = choice.options[i]
+        const isSelected = i === choice.selected
+        const pointer = isSelected && blinkOn ? '▶ ' : '  '
+        push(pointer + opt.label, isSelected ? BOLD + C.brightYellow : C.white)
+      }
+      push('', null)
+      pushCentered('W/S elegir · Espacio', DIM + C.gray)
+    }
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+    return lines
   }
 
   // A pause-and-pick modal drawn over the (frozen) arena, in the same
@@ -428,7 +459,7 @@ class TerminalRenderer {
       push(label, color)
     }
     push('', null)
-    pushCentered('W/S elegir · Espacio', DIM + C.gray)
+    pushCentered('W/S elegir · Enter', DIM + C.gray)
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
     for (const { text, color } of body) {
@@ -466,6 +497,9 @@ class TerminalRenderer {
     push(pad('Arma', inner), C.white)
     push(pad(` ${weaponDef.name}`, inner), C.brightYellow)
     push(pad(` Municion: ${ammo}`, inner), DIM + C.brightYellow)
+    if (weaponDef.multishotEligible && p.upgrades.extraShots > 0) {
+      push(pad(` Balas: ${1 + p.upgrades.extraShots}`, inner), DIM + C.brightYellow)
+    }
 
     const abilityIds = [...p.abilities]
     if (abilityIds.length > 0) {
@@ -504,15 +538,6 @@ class TerminalRenderer {
     }
     lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
     return lines
-  }
-
-  _xpBarLine(world, cols) {
-    const xp = world.experience
-    const pct = Math.min(100, Math.floor(experienceApi.percent(xp)))
-    const suffix = `] ${pct}% Nv:${xp.level}`
-    const inner = Math.max(10, cols - 5 - suffix.length)
-    const filled = Math.max(0, Math.min(inner, Math.round((pct / 100) * inner)))
-    return `EXP [${'#'.repeat(filled)}${'.'.repeat(inner - filled)}${suffix}`.padEnd(cols)
   }
 }
 
