@@ -54,8 +54,19 @@ class CoopSession {
     this.onDisconnected = null // () => void
     this.onInput = null // host side: (input) => void, guest's input arrived
     this.onState = null // guest side: (worldSnapshot) => void, host's state arrived
+    this.onLeaderboard = null // (entries) => void, peer's leaderboard entries arrived
+    // Optional (message) => void for loop.js to console.error — Hyperswarm
+    // has no relay fallback, so when a match never connects the only way
+    // to tell "stuck slow" from "never going to work" apart is to see how
+    // far it actually got (DHT announce done? any raw connection attempt
+    // at all?).
+    this.onDebug = null
 
     this.swarm.on('connection', (socket, info) => this._onConnection(socket, info))
+  }
+
+  _debug(message) {
+    if (this.onDebug) this.onDebug(message)
   }
 
   // Joins a topic (the public lobby by default, or a private one derived
@@ -64,15 +75,31 @@ class CoopSession {
   // announce/lookup round has gone out. The actual pairing happens
   // asynchronously via the 'connection' handler above/onConnected.
   async findMatch(topic = LOBBY_TOPIC) {
+    this._debug(`joining topic ${b4a.toString(topic, 'hex').slice(0, 12)}…`)
     const discovery = this.swarm.join(topic, { server: true, client: true })
     await discovery.flushed()
+    this._debug('DHT announce done (discovery.flushed() resolved)')
     await this.swarm.flush()
+    this._debug(`initial peer lookup done — known peers right now: ${this.swarm.peers.size}`)
+  }
+
+  // How far the DHT layer has gotten without a full connection — useful
+  // to log periodically while "buscando" sits on screen, since silence
+  // the whole time (peers stays 0, no 'connection' event ever) points at
+  // a NAT/firewall that's blocking the direct socket entirely (no relay
+  // to fall back on), vs. peers > 0 but still no 'connection' pairing,
+  // which would point somewhere else.
+  debugSnapshot() {
+    return `peers known: ${this.swarm.peers.size}, connecting: ${this.swarm.connecting}, open connections: ${this.swarm.connections.size}`
   }
 
   _onConnection(socket, info) {
+    this._debug(`raw connection event (peer ${b4a.toString(info.publicKey, 'hex').slice(0, 12)}…)`)
+
     // Already paired with someone — a public lobby could in principle see
     // a third peer show up mid-match; this game only ever supports two.
     if (this.conn) {
+      this._debug('already paired — destroying extra connection')
       socket.destroy()
       return
     }
@@ -84,6 +111,7 @@ class CoopSession {
     // public keys and land on the same answer independently, no extra
     // handshake round-trip needed to agree on who hosts.
     this.isHost = b4a.compare(this.swarm.keyPair.publicKey, info.publicKey) < 0
+    this._debug(`paired — role: ${this.isHost ? 'host' : 'guest'}`)
 
     stream.on('data', (buf) => this._onMessage(buf))
     stream.on('close', () => this._onClose())
@@ -102,6 +130,7 @@ class CoopSession {
     }
     if (msg.t === 'input' && this.onInput) this.onInput(msg.input)
     else if (msg.t === 'state' && this.onState) this.onState(msg.world)
+    else if (msg.t === 'leaderboard' && this.onLeaderboard) this.onLeaderboard(msg.entries)
   }
 
   _onClose() {
@@ -118,6 +147,15 @@ class CoopSession {
   sendState(world) {
     if (!this.conn) return
     this.conn.write(JSON.stringify({ t: 'state', world }))
+  }
+
+  // Gossips local leaderboard entries to whoever we just connected to —
+  // there's no server to host a shared ranking on, so this is how scores
+  // spread between installs at all: every co-op match is a chance for two
+  // local leaderboards to merge a little more of each other in.
+  sendLeaderboard(entries) {
+    if (!this.conn) return
+    this.conn.write(JSON.stringify({ t: 'leaderboard', entries }))
   }
 
   async close() {

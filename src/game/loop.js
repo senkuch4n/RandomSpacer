@@ -1,9 +1,11 @@
 'use strict'
 
+const os = require('bare-os')
 const { World } = require('./world')
 const { TerminalRenderer } = require('../render/terminal')
 const { InputManager } = require('../render/input')
 const { createMenu } = require('./menu')
+const leaderboardApi = require('./leaderboard')
 const {
   CoopSession,
   generateCode,
@@ -12,7 +14,31 @@ const {
   topicFromCode
 } = require('../net/coop')
 
+// Best-effort local player name for leaderboard entries — no separate
+// "enter your name" screen, since the OS username is already right there
+// and zero-friction. Falls back if userInfo isn't available for some
+// reason (shouldn't normally happen under Bare, but a leaderboard entry
+// failing to get a name shouldn't be fatal).
+function getPlayerName() {
+  try {
+    const info = os.userInfo()
+    if (info && info.username) return info.username
+  } catch {}
+  return 'Jugador'
+}
+
 const TICK_MS = 40 // 25 fps — plenty for an ASCII arena, cheap to redraw
+// Hyperswarm has no built-in fallback (TURN-style relay) if direct UDP
+// holepunching fails outright — some NAT/firewall combinations just never
+// connect. Without a deadline the "buscando" screen hangs forever with no
+// feedback, which reads as broken even though it's "just" a network
+// issue. Giving up after this long at least tells the player so.
+const CONNECT_TIMEOUT_MS = 30000
+const DEBUG_SNAPSHOT_TICKS = Math.round(5000 / TICK_MS) // every ~5s while waiting to connect
+
+function armCoopDebug(session, label) {
+  session.onDebug = (message) => console.error(`[coop-debug:${label}]`, message)
+}
 
 const EMPTY_INPUT = {
   up: false,
@@ -22,7 +48,8 @@ const EMPTY_INPUT = {
   fire: false,
   confirm: false,
   cycleWeapon: false,
-  activateAbility: false
+  activateAbility: false,
+  toggleRanking: false
 }
 
 // Wires the World simulation to a terminal renderer + raw keyboard input
@@ -32,9 +59,45 @@ const EMPTY_INPUT = {
 // Returns a small controller so the caller (bin.mjs) can push status text
 // (e.g. OTA updater events) into the HUD and stop the game cleanly on
 // exit.
-function startGame({ rng, onExit }) {
+function startGame({ rng, onExit, storageDir }) {
   const renderer = new TerminalRenderer()
   const input = new InputManager()
+  const playerName = getPlayerName()
+
+  // Local, P2P-gossiped leaderboard (src/game/leaderboard.js) — loaded
+  // once and kept in memory rather than re-read from disk on every menu
+  // render; refreshed whenever a run ends or a co-op peer sends its own
+  // entries to merge in.
+  let leaderboardEntries = storageDir ? leaderboardApi.load(storageDir) : []
+
+  function recordScore(world, mode) {
+    if (!storageDir) return
+    leaderboardEntries = leaderboardApi.addEntry(storageDir, {
+      name: playerName,
+      score: world.score,
+      mode,
+      wave: world.wave,
+      date: new Date().toISOString().slice(0, 10)
+    })
+  }
+
+  // Reads leaderboardEntries fresh each call (rather than snapshotting it
+  // once) so a co-op peer's gossiped entries — merged in mid-match via
+  // wireLeaderboardSync — show up immediately next tick.
+  function topEntriesFor(mode, limit) {
+    return leaderboardApi.topEntries(leaderboardEntries, mode, limit)
+  }
+
+  // Runs once right when a co-op connection is established (not on every
+  // restart within it) — trades local leaderboard entries with whoever we
+  // just connected to and merges what comes back in, since there's no
+  // server to host a shared ranking on otherwise.
+  function wireLeaderboardSync(session) {
+    session.onLeaderboard = (entries) => {
+      if (storageDir) leaderboardEntries = leaderboardApi.mergeIncoming(storageDir, entries)
+    }
+    if (storageDir) session.sendLeaderboard(leaderboardEntries)
+  }
 
   let timer = null
   let stopped = false
@@ -111,7 +174,14 @@ function startGame({ rng, onExit }) {
           runCoopJoinCode(difficulty)
           return
         }
-        renderer.renderMenu(menu)
+        if (menu.screen === 'ranking') {
+          renderer.renderRanking(
+            menu,
+            leaderboardApi.topEntries(leaderboardEntries, menu.rankingMode, 15)
+          )
+        } else {
+          renderer.renderMenu(menu)
+        }
       } catch (err) {
         stop(1)
         console.error('[menu:error]', err)
@@ -126,6 +196,8 @@ function startGame({ rng, onExit }) {
     currentSetStatus = (message) => world.setStatus(message)
 
     let lastTick = Date.now()
+    let recorded = false // guards against re-recording every tick spent on the game-over screen
+    let showRanking = false // R toggles a full-screen ranking view, pausing the sim while it's open
 
     renderer.onResize(() => {
       const size = renderer.arenaSize()
@@ -142,8 +214,21 @@ function startGame({ rng, onExit }) {
       // until the user blind-types `reset`. Restore the terminal first,
       // then surface the error.
       try {
-        world.update(dtMs, [input.snapshot()])
-        renderer.render(world)
+        const inp = input.snapshot()
+        if (inp.toggleRanking) showRanking = !showRanking
+
+        if (showRanking) {
+          renderer.renderRankingOverlay(topEntriesFor('solo', 10), 'solo')
+          return
+        }
+
+        world.update(dtMs, [inp])
+        renderer.render(world, 0, topEntriesFor('solo', 3))
+
+        if (world.gameOver && !recorded) {
+          recorded = true
+          recordScore(world, 'solo')
+        }
 
         // The World can't tear itself down/rebuild the renderer, so it
         // just records the player's game-over choice — loop.js drives
@@ -182,19 +267,38 @@ function startGame({ rng, onExit }) {
       pendingStatus = message
     }
     const session = new CoopSession()
+    armCoopDebug(session, 'auto')
     let settled = false
+    let tick = 0
+    const startedAt = Date.now()
+
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-search:timeout] no peer found within', CONNECT_TIMEOUT_MS, 'ms')
+      session.close().catch(() => {})
+      pendingStatus = 'No se encontró compañero (revisá tu red/firewall)'
+      runMenu()
+    }, CONNECT_TIMEOUT_MS)
 
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
+      wireLeaderboardSync(session)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
     }
 
     timer = setInterval(() => {
       try {
-        renderer.renderSearching()
+        renderer.renderSearching(null, Date.now() - startedAt)
+        tick++
+        if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
+          console.error('[coop-debug:auto]', session.debugSnapshot())
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-search:error]', err)
@@ -204,6 +308,7 @@ function startGame({ rng, onExit }) {
     session.findMatch().catch((err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-search:error]', err)
       session.close().catch(() => {})
@@ -222,19 +327,38 @@ function startGame({ rng, onExit }) {
     }
     const code = generateCode()
     const session = new CoopSession()
+    armCoopDebug(session, 'host-code')
     let settled = false
+    let tick = 0
+    const startedAt = Date.now()
+
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-host-code:timeout] no peer joined within', CONNECT_TIMEOUT_MS, 'ms')
+      session.close().catch(() => {})
+      pendingStatus = 'Nadie se conectó a ese código (revisá tu red/firewall)'
+      runMenu()
+    }, CONNECT_TIMEOUT_MS)
 
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
+      wireLeaderboardSync(session)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
     }
 
     timer = setInterval(() => {
       try {
-        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`, Date.now() - startedAt)
+        tick++
+        if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
+          console.error('[coop-debug:host-code]', session.debugSnapshot())
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-host-code:error]', err)
@@ -244,6 +368,7 @@ function startGame({ rng, onExit }) {
     session.findMatch(topicFromCode(code)).catch((err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-host-code:error]', err)
       session.close().catch(() => {})
@@ -297,19 +422,38 @@ function startGame({ rng, onExit }) {
 
   function runCoopJoinConnecting(difficulty, code) {
     const session = new CoopSession()
+    armCoopDebug(session, 'join-code')
     let settled = false
+    let tick = 0
+    const startedAt = Date.now()
+
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      console.error('[coop-join-connecting:timeout] no host found within', CONNECT_TIMEOUT_MS, 'ms')
+      session.close().catch(() => {})
+      pendingStatus = 'No se pudo conectar con ese código (revisá tu red/firewall)'
+      runMenu()
+    }, CONNECT_TIMEOUT_MS)
 
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
+      wireLeaderboardSync(session)
       if (isHost) runCoopHost(difficulty, session)
       else runCoopGuest(session)
     }
 
     timer = setInterval(() => {
       try {
-        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`)
+        renderer.renderSearching(`Código: ${formatCodeForDisplay(code)}`, Date.now() - startedAt)
+        tick++
+        if (tick % DEBUG_SNAPSHOT_TICKS === 0) {
+          console.error('[coop-debug:join-code]', session.debugSnapshot())
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-join-connecting:error]', err)
@@ -319,6 +463,7 @@ function startGame({ rng, onExit }) {
     session.findMatch(topicFromCode(code)).catch((err) => {
       if (settled) return
       settled = true
+      clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-join-connecting:error]', err)
       session.close().catch(() => {})
@@ -345,6 +490,8 @@ function startGame({ rng, onExit }) {
     }
 
     let lastTick = Date.now()
+    let recorded = false
+    let showRanking = false // pressing R here pauses the sim for both peers — see runGame's comment
     renderer.onResize(() => {
       const size = renderer.arenaSize()
       world.resize(size.width, size.height)
@@ -356,9 +503,23 @@ function startGame({ rng, onExit }) {
       lastTick = now
 
       try {
-        world.update(dtMs, [input.snapshot(), remoteInput])
-        renderer.render(world, 0)
+        const inp = input.snapshot()
+        if (inp.toggleRanking) showRanking = !showRanking
+
+        if (showRanking) {
+          renderer.renderRankingOverlay(topEntriesFor('coop', 10), 'coop')
+          session.sendState(world.toSnapshot())
+          return
+        }
+
+        world.update(dtMs, [inp, remoteInput])
+        renderer.render(world, 0, topEntriesFor('coop', 3))
         session.sendState(world.toSnapshot())
+
+        if (world.gameOver && !recorded) {
+          recorded = true
+          recordScore(world, 'coop')
+        }
 
         if (world.gameOverAction === 'restart') {
           clearInterval(timer)
@@ -383,6 +544,14 @@ function startGame({ rng, onExit }) {
     }
 
     let latestState = null
+    // The guest's runCoopGuest only runs once per connection (unlike
+    // runCoopHost, which the host re-enters on every restart) — the host
+    // can restart the same session many times, so "just entered game
+    // over" has to be detected as an edge on the incoming snapshots
+    // rather than a one-shot flag, or only the very first game over of
+    // the whole connection would ever get recorded.
+    let wasGameOver = false
+    let showRanking = false
     session.onState = (worldSnapshot) => {
       latestState = worldSnapshot
     }
@@ -395,8 +564,25 @@ function startGame({ rng, onExit }) {
 
     timer = setInterval(() => {
       try {
-        session.sendInput(input.snapshot())
-        if (latestState) renderer.render(latestState, 1)
+        const inp = input.snapshot()
+        if (inp.toggleRanking) showRanking = !showRanking
+
+        // The guest doesn't own the simulation, so opening the ranking
+        // here can't pause anything — it just stops sending real movement
+        // (an idle ship is still safer than one drifting unattended) and
+        // shows a local overlay instead of the host's stream.
+        session.sendInput(showRanking ? EMPTY_INPUT : inp)
+
+        if (showRanking) {
+          renderer.renderRankingOverlay(topEntriesFor('coop', 10), 'coop')
+          return
+        }
+
+        if (latestState) {
+          renderer.render(latestState, 1, topEntriesFor('coop', 3))
+          if (latestState.gameOver && !wasGameOver) recordScore(latestState, 'coop')
+          wasGameOver = latestState.gameOver
+        }
       } catch (err) {
         stop(1)
         console.error('[coop-guest:error]', err)

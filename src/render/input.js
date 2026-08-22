@@ -19,6 +19,7 @@ class InputManager {
     this.stdin = new tty.ReadStream(0)
     this._lastSeen = Object.create(null)
     this._cyclePresses = 0
+    this._rankingPresses = 0
     this._quit = false
     this._pendingEscape = ''
     this.onQuit = null
@@ -71,6 +72,7 @@ class InputManager {
   resetHeld() {
     this._lastSeen = Object.create(null)
     this._cyclePresses = 0
+    this._rankingPresses = 0
   }
 
   _onData(chunk) {
@@ -117,6 +119,7 @@ class InputManager {
       else if (ch === '\r' || ch === '\n') this._mark('confirm')
       else if (lower === 'e' || ch === '\t') this._cyclePresses += 1
       else if (lower === 'x') this._mark('ability')
+      else if (lower === 'r') this._rankingPresses += 1
     }
   }
 
@@ -160,6 +163,9 @@ class InputManager {
     const cycleWeapon = this._cyclePresses > 0
     if (cycleWeapon) this._cyclePresses = 0
 
+    const toggleRanking = this._rankingPresses > 0
+    if (toggleRanking) this._rankingPresses = 0
+
     return {
       up: this._held('up'),
       down: this._held('down'),
@@ -168,7 +174,8 @@ class InputManager {
       fire: this._held('fire'),
       confirm: this._held('confirm'),
       cycleWeapon,
-      activateAbility: this._held('ability')
+      activateAbility: this._held('ability'),
+      toggleRanking
     }
   }
 

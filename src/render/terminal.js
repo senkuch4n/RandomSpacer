@@ -108,17 +108,35 @@ function center(text, width) {
   return ' '.repeat(left) + text + ' '.repeat(width - text.length - left)
 }
 
+// Real terminal resizes (dragging a window edge) often fire a burst of
+// several 'resize' events within a few ms rather than one clean event —
+// without debouncing, each one would immediately recompute layout and
+// hand render() a different `top`/arena size mid-burst, which looks
+// exactly like the whole board jittering up and down. Waiting this long
+// after the last event in a burst before actually applying it smooths
+// that out; it's imperceptible as an added delay to a human resizing a
+// window.
+const RESIZE_DEBOUNCE_MS = 80
+
 class TerminalRenderer {
   constructor() {
     this.out = new tty.WriteStream(1)
+    // Cached rather than read live from `this.out` on every render() call
+    // — snapshotting once per actual resize (below) means a frame's
+    // layout can't shift mid-render if the underlying stream's reported
+    // size were to change (or be read inconsistently) between the many
+    // property reads a single render() does.
+    this._columns = this.out.columns
+    this._rows = this.out.rows
+    this._resizeTimer = null
   }
 
   get columns() {
-    return this.out.columns
+    return this._columns
   }
 
   get rows() {
-    return this.out.rows
+    return this._rows
   }
 
   arenaSize() {
@@ -135,7 +153,14 @@ class TerminalRenderer {
   // doesn't pile up listeners still pointing at discarded World objects.
   onResize(cb) {
     this.out.removeAllListeners('resize')
-    this.out.on('resize', cb)
+    this.out.on('resize', () => {
+      clearTimeout(this._resizeTimer)
+      this._resizeTimer = setTimeout(() => {
+        this._columns = this.out.columns
+        this._rows = this.out.rows
+        cb()
+      }, RESIZE_DEBOUNCE_MS)
+    })
   }
 
   start() {
@@ -143,6 +168,7 @@ class TerminalRenderer {
   }
 
   stop() {
+    clearTimeout(this._resizeTimer)
     // Flush the cursor-restore sequence before destroying the stream — an
     // open bare-tty WriteStream keeps the event loop alive, so without an
     // explicit destroy the process (and the terminal) never gets control
@@ -152,9 +178,12 @@ class TerminalRenderer {
 
   // Shown while src/net/coop.js is joining the Hyperswarm lobby and
   // waiting for a peer. `status` is a short line under the animated
-  // "buscando" text (e.g. connection state or an error to show before
-  // falling back to the menu).
-  renderSearching(status) {
+  // "buscando" text (e.g. connection state, a code to share, or an error
+  // to show before falling back to the menu). `elapsedMs` (time since the
+  // search started, tracked by loop.js) renders as a running mm:ss timer
+  // so a long wait is visibly still counting instead of looking frozen —
+  // there's no way to tell "slow" from "stuck" otherwise.
+  renderSearching(status, elapsedMs) {
     const cols = this.columns
     const rows = this.rows
     const width = Math.min(46, Math.max(30, cols - 4))
@@ -169,6 +198,12 @@ class TerminalRenderer {
     push('', null)
     pushCentered('Cooperativo', BOLD + C.brightMagenta)
     pushCentered(`Buscando compañero${dots}`, C.brightCyan)
+    if (typeof elapsedMs === 'number') {
+      const totalSec = Math.max(0, Math.floor(elapsedMs / 1000))
+      const mm = String(Math.floor(totalSec / 60)).padStart(2, '0')
+      const ss = String(totalSec % 60).padStart(2, '0')
+      pushCentered(`${mm}:${ss}`, DIM + C.gray)
+    }
     if (status) {
       push('', null)
       pushCentered(status, BOLD + C.brightYellow)
@@ -266,6 +301,7 @@ class TerminalRenderer {
       push('  Espacio  disparar', DIM + C.gray)
       push('  E        cambiar arma', DIM + C.gray)
       push('  X        habilidad', DIM + C.gray)
+      push('  R        ranking', DIM + C.gray)
       push('  Q        salir', DIM + C.gray)
       push('', null)
       pushCentered('Espacio para volver', C.brightCyan)
@@ -337,11 +373,154 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  render(world, localPlayerIndex = 0) {
+  // Two-column layout matching gameplay's panel+arena composition instead
+  // of a small centered popup: a boxed sidebar on the left (title, mode
+  // filters that apply the instant you highlight them, and an explicit
+  // "Volver al menú" row) and the ranking table itself in a double-line
+  // box on the right, where the arena normally sits.
+  renderRanking(menu, entries) {
+    const cols = this.columns
+    const rows = this.rows
+    const inner = PANEL_WIDTH - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+
+    const sidebar = []
+    const push = (text, color) => sidebar.push({ text: pad(text, inner), color })
+
+    push(center('RANDOMSPACE', inner), BOLD + C.brightCyan)
+    push(center(`v${pkg.version}`, inner), DIM + C.gray)
+    push('', null)
+    push('Ranking', BOLD + C.brightGreen)
+    push('', null)
+    for (let i = 0; i < menu.rankingItems.length; i++) {
+      const item = menu.rankingItems[i]
+      const isSelected = i === menu.rankingSelected
+      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
+    }
+    push('', null)
+    push('W/S elegir', DIM + C.gray)
+    push('Espacio confirma', DIM + C.gray)
+
+    const panelLines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of sidebar) {
+      panelLines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    panelLines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+
+    const boxW = Math.min(50, Math.max(30, cols - PANEL_WIDTH - PANEL_GAP - 2))
+    const modeLabels = { all: 'Todos', solo: 'Solo', coop: 'Cooperativo' }
+    const tableLines = []
+    const tpush = (text, color) => tableLines.push({ text: pad(text, boxW), color })
+    const tpushCentered = (text, color) => tableLines.push({ text: center(text, boxW), color })
+
+    tpushCentered(`Ranking — ${modeLabels[menu.rankingMode]}`, BOLD + C.brightCyan)
+    tpush('', null)
+    if (entries.length === 0) {
+      tpushCentered('Sin puntajes todavía', DIM + C.gray)
+    } else {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]
+        const rank = String(i + 1).padStart(2, ' ')
+        const tag = e.mode === 'coop' ? 'C' : 'S'
+        const scoreStr = String(e.score)
+        const left = `${rank}. [${tag}] ${e.name} (ola ${e.wave})`
+        tpush(pad(left, boxW - scoreStr.length) + scoreStr, i < 3 ? BOLD + C.brightYellow : C.white)
+      }
+    }
+
+    const boxLines = [{ text: '╔' + '═'.repeat(boxW) + '╗', color: BORDER_COLOR }]
+    for (const { text, color } of tableLines) {
+      boxLines.push({ text: '║' + text + '║', color: color || BORDER_COLOR })
+    }
+    boxLines.push({ text: '╚' + '═'.repeat(boxW) + '╝', color: BORDER_COLOR })
+
+    const contentWidth = PANEL_WIDTH + PANEL_GAP + (boxW + 2)
+    const contentHeight = Math.max(panelLines.length, boxLines.length)
+    const left = Math.max(0, Math.floor((cols - contentWidth) / 2))
+    const top = Math.max(0, Math.floor((rows - contentHeight) / 2))
+
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    for (let r = 0; r < panelLines.length && top + r < rows; r++) {
+      const { text, color } = panelLines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    const boxLeft = left + PANEL_WIDTH + PANEL_GAP
+    for (let r = 0; r < boxLines.length && top + r < rows; r++) {
+      const { text, color } = boxLines[r]
+      for (let c = 0; c < text.length && boxLeft + c < cols; c++) {
+        grid[top + r][boxLeft + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  // A quick full-screen ranking view while playing, opened/closed with R —
+  // see loop.js. There's no server to ask for a live, always-in-sync
+  // board, so this is a snapshot of the local leaderboard at the moment R
+  // was pressed rather than something that updates live while it's open;
+  // in solo/co-op-host it also pauses the simulation for as long as it's
+  // shown (simplest way to show a wider table than the sidebar's Top 3
+  // without it scrolling underneath a moving game).
+  renderRankingOverlay(entries, mode) {
+    const cols = this.columns
+    const rows = this.rows
+    const width = Math.min(50, Math.max(30, cols - 4))
+    const inner = width - 2
+    const modeLabels = { all: 'Todos', solo: 'Solo', coop: 'Cooperativo' }
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered(`Ranking — ${modeLabels[mode] || 'Todos'}`, BOLD + C.brightCyan)
+    push('', null)
+    if (entries.length === 0) {
+      pushCentered('Sin puntajes todavía', DIM + C.gray)
+    } else {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i]
+        const rank = String(i + 1).padStart(2, ' ')
+        const tag = e.mode === 'coop' ? 'C' : 'S'
+        const scoreStr = String(e.score)
+        const left = `${rank}. [${tag}] ${e.name} (ola ${e.wave})`
+        push(pad(left, inner - scoreStr.length) + scoreStr, i < 3 ? BOLD + C.brightYellow : C.white)
+      }
+    }
+    push('', null)
+    pushCentered('R vuelve al juego', DIM + C.gray)
+
+    const lines = [{ text: '╔' + '═'.repeat(inner) + '╗', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '║' + text + '║', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '╚' + '═'.repeat(inner) + '╝', color: BORDER_COLOR })
+
+    const top = Math.max(0, Math.floor((rows - lines.length) / 2))
+    const left = Math.max(0, Math.floor((cols - width) / 2))
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+    for (let r = 0; r < lines.length && top + r < rows; r++) {
+      const { text, color } = lines[r]
+      for (let c = 0; c < text.length && left + c < cols; c++) {
+        grid[top + r][left + c] = color ? colored(color, text[c]) : text[c]
+      }
+    }
+
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  render(world, localPlayerIndex = 0, topEntries = []) {
     const cols = this.columns
     const rows = this.rows
 
-    const panel = this._panelLines(world, localPlayerIndex)
+    const panel = this._panelLines(world, localPlayerIndex, topEntries)
     // The simulated arena (world.width/height) is capped smaller than the
     // terminal by arenaSize() — plot against those bounds, but still fill
     // a full-terminal-width grid so leftover content outside the arena is
@@ -591,7 +770,7 @@ class TerminalRenderer {
     return lines
   }
 
-  _panelLines(world, localPlayerIndex = 0) {
+  _panelLines(world, localPlayerIndex = 0, topEntries = []) {
     const inner = PANEL_WIDTH - 2
     const p = world.players[localPlayerIndex] || world.player
     const weaponId = p.weaponOrder[p.currentWeaponIndex]
@@ -646,12 +825,27 @@ class TerminalRenderer {
       push(pad(`[${'█'.repeat(pct)}${'░'.repeat(12 - pct)}]`, inner), bossColor(world.boss))
     }
 
+    if (topEntries.length > 0) {
+      push(pad('', inner), null)
+      push(pad('Top 3', inner), C.white)
+      for (let i = 0; i < Math.min(3, topEntries.length); i++) {
+        const e = topEntries[i]
+        const scoreStr = String(e.score)
+        const left = ` ${i + 1}.${e.name}`
+        push(
+          pad(left, inner - scoreStr.length) + scoreStr,
+          i === 0 ? C.brightYellow : DIM + C.white
+        )
+      }
+    }
+
     push(pad('', inner), null)
     push(pad('Controles', inner), C.white)
     push(pad(' WASD     mover', inner), DIM + C.gray)
     push(pad(' Espacio  disparar', inner), DIM + C.gray)
     push(pad(' E        cambiar', inner), DIM + C.gray)
     push(pad(' X        habilidad', inner), DIM + C.gray)
+    push(pad(' R        ranking', inner), DIM + C.gray)
     push(pad(' Q        salir', inner), DIM + C.gray)
 
     if (world.statusMessage) {
