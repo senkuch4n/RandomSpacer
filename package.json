@@ -5,7 +5,7 @@
   "description": "Terminal Asteroids-like with rotating bosses and pickups, shipped on Pear with P2P OTA updates.",
   "private": true,
   "bin": "bin.mjs",
-  "upgrade": "pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy",
+  "upgrade": "pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy",
   "scripts": {
     "format": "prettier . --write",
     "test": "brittle-bare test/index.js",

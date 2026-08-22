@@ -7,7 +7,7 @@ Built for the **Pears Track** at [hackathon]. Started from [`hello-pear-bare`][h
 ## Play it
 
 ```sh
-pear install pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy
+pear install pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy
 ```
 
 Then run the installed `randomspace` binary in a real terminal (raw keyboard input needs a TTY — it won't work piped or in a non-interactive shell).
@@ -86,8 +86,8 @@ npm start -- --updates
 
 1. Change game code under `src/` (e.g. add a boss to `src/bosses/index.js`).
 2. `npm run make:<platform>-<arch>` only if native/runtime deps changed — pure JS/game-logic changes don't need a binary rebuild, they ship straight through staging.
-3. `pear stage pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy .` (dry-run first).
-4. Keep `pear seed pear://ns4nnrou5xqxp431ih68ibmbwrj9ahtrpc3he3s3xd5nhycotapy` running somewhere reachable — installed copies only get the update if a seeder is up.
+3. `pear stage pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy .` (dry-run first).
+4. Keep `pear seed pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy` running somewhere reachable — installed copies only get the update if a seeder is up.
 
 Note: only production `dependencies` (not `devDependencies` like `bare-build`, `prettier`, `lunte`, `brittle`) should be staged — see `.gitignore` and stage from a clean `npm ci --omit=dev` copy if staging from a dir that has dev tooling installed, to avoid shipping hundreds of MB of build toolchain into the P2P drive.
 
@@ -96,6 +96,7 @@ Note: only production `dependencies` (not `devDependencies` like `bare-build`, `
 - `INVALID_URL: Invalid URL 'pear://<YOUR_KEY_HERE>'` means the `upgrade` link in `package.json` is still a placeholder. Run `pear touch` and replace it.
 - On the daemon variant (not used here), updater errors go to `<storage>/updates.log` instead of stdout.
 - If `pear install` reports `Not found: .../by-arch/<arch>/app/<name>`, the staged `by-arch` folder name must exactly match the lowercase `name` field in `package.json`, not `productName`.
+- Building `by-arch` on macOS (case-insensitive filesystem): `pear build`'s `--<platform>-app` flags require the input directory to be named after `productName` (e.g. `RandomSpace`), but `pear install` looks it up by the lowercase `name` field (`randomspace`) inside `by-arch/<arch>/app/`. Don't `mv`/rename that folder in place to fix the casing — on APFS this can silently leave a stale/duplicated entry that later corrupts local installs (seen once during this hackathon: an installed copy ended up with a nested `randomspace/RandomSpace` nobody staged). Instead, always `cp -R` the `pear build` output into a **freshly created**, correctly-named directory in a separate location, then stage that.
 - Raw keyboard input requires a real TTY; running the binary with stdout/stdin redirected will fail with `ENOTTY`/`EINVAL` on the renderer.
 
 <!-- Reference Links -->
