@@ -68,7 +68,11 @@ class TerminalRenderer {
   }
 
   stop() {
-    this.out.write('\x1b[?25h\x1b[2J\x1b[H')
+    // Flush the cursor-restore sequence before destroying the stream — an
+    // open bare-tty WriteStream keeps the event loop alive, so without an
+    // explicit destroy the process (and the terminal) never gets control
+    // back after the game exits.
+    this.out.end('\x1b[?25h\x1b[2J\x1b[H', () => this.out.destroy())
   }
 
   render(world) {
@@ -85,12 +89,12 @@ class TerminalRenderer {
     for (let r = 0; r < totalRows; r++) grid[r] = new Array(cols).fill(' ')
 
     for (let x = 0; x < arenaW; x++) {
-      grid[0][x] = '.'
-      grid[arenaH - 1][x] = '.'
+      grid[0][x] = '#'
+      grid[arenaH - 1][x] = '#'
     }
     for (let y = 0; y < arenaH; y++) {
-      grid[y][0] = '.'
-      grid[y][arenaW - 1] = '.'
+      grid[y][0] = '#'
+      grid[y][arenaW - 1] = '#'
     }
 
     for (const a of world.asteroids) plot(grid, arenaW, arenaH, a.pos.x, a.pos.y, a.symbol)
