@@ -159,6 +159,14 @@ class TerminalRenderer {
       push('  Q        salir', DIM + C.gray)
       push('', null)
       pushCentered('Espacio para volver', C.brightCyan)
+    } else if (menu.screen === 'credits') {
+      pushCentered('Aleph Hackathon', BOLD + C.brightGreen)
+      pushCentered('Pears Track', DIM + C.gray)
+      push('', null)
+      pushCentered('Joel Serrudo', C.brightYellow)
+      pushCentered('Lautaro Aponte', C.brightYellow)
+      push('', null)
+      pushCentered('Espacio para volver', C.brightCyan)
     } else {
       for (let i = 0; i < menu.items.length; i++) {
         const item = menu.items[i]
@@ -181,6 +189,22 @@ class TerminalRenderer {
 
     const grid = new Array(rows)
     for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    // A sparse, slowly-twinkling starfield behind the menu box — purely
+    // decorative, so a cheap position hash (not the game's seeded rng)
+    // decides which cells are stars, and the current time decides which
+    // of those are lit this frame. The box drawn below overwrites
+    // whatever stars fall inside it.
+    const now = Date.now()
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const hash = (c * 928371 + r * 6151) % 977
+        if (hash >= 18) continue
+        const phase = Math.floor(now / 500 + hash) % 3
+        if (phase === 0) grid[r][c] = colored(DIM + C.gray, '.')
+        else if (phase === 1) grid[r][c] = colored(DIM + C.white, '·')
+      }
+    }
 
     for (let r = 0; r < lines.length && top + r < rows; r++) {
       const { text, color } = lines[r]

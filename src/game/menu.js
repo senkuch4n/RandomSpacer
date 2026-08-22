@@ -9,7 +9,8 @@ function createMenu() {
     screen: 'main',
     items: [
       { id: 'play', label: 'Jugar' },
-      { id: 'controls', label: 'Controles' },
+      { id: 'controls', label: 'Controles', screen: 'controls' },
+      { id: 'credits', label: 'Créditos', screen: 'credits' },
       { id: 'quit', label: 'Salir' }
     ],
     selected: 0,
@@ -18,7 +19,8 @@ function createMenu() {
     _prevConfirm: false,
 
     // Returns 'play' or 'quit' when the player confirms that action,
-    // otherwise null (including while just browsing the controls screen).
+    // otherwise null (including while just browsing a sub-screen like
+    // Controles/Créditos).
     update(input) {
       const upEdge = input.up && !this._prevUp
       const downEdge = input.down && !this._prevDown
@@ -27,7 +29,7 @@ function createMenu() {
       this._prevDown = input.down
       this._prevConfirm = input.fire
 
-      if (this.screen === 'controls') {
+      if (this.screen !== 'main') {
         if (confirmEdge) this.screen = 'main'
         return null
       }
@@ -37,12 +39,12 @@ function createMenu() {
       if (downEdge) this.selected = (this.selected + 1) % n
 
       if (confirmEdge) {
-        const id = this.items[this.selected].id
-        if (id === 'controls') {
-          this.screen = 'controls'
+        const item = this.items[this.selected]
+        if (item.screen) {
+          this.screen = item.screen
           return null
         }
-        return id
+        return item.id
       }
 
       return null
