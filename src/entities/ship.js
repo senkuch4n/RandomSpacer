@@ -3,7 +3,7 @@
 const START_LIVES = 3
 const INVULNERABLE_MS_ON_HIT = 1500
 
-function createShip({ x, y }) {
+function createShip({ x, y, startLives = START_LIVES }) {
   return {
     kind: 'ship',
     pos: { x, y },
@@ -12,7 +12,7 @@ function createShip({ x, y }) {
     radius: 1,
     thrusting: false,
 
-    lives: START_LIVES,
+    lives: startLives,
     maxLives: 5,
     score: 0,
     alive: true,

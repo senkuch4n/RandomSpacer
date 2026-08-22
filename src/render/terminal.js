@@ -46,6 +46,10 @@ const BOSS_COLORS = {
 const PICKUP_COLOR = C.brightGreen
 const RING_COLOR = C.cyan
 const BORDER_COLOR = C.cyan
+const DIFFICULTY_COLORS = { easy: C.brightGreen, normal: C.brightCyan, hard: C.brightRed }
+// Same semantics as DIFFICULTY_COLORS, reused for the item-choice modal's
+// per-type row colors (weapon/ability/plain pickup).
+const ITEM_TYPE_COLORS = { weapon: C.brightYellow, ability: C.brightGreen, pickup: C.brightRed }
 
 function bossColor(boss) {
   return (boss && BOSS_COLORS[boss.defId]) || BOSS_COLOR
@@ -168,7 +172,11 @@ class TerminalRenderer {
         push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
       }
       push('', null)
+      const diffColor = DIFFICULTY_COLORS[menu.difficulty.id] || C.white
+      pushCentered(`◀ Dificultad: ${menu.difficulty.label} ▶`, diffColor)
+      push('', null)
       pushCentered('W/S mover · Espacio elegir · Q salir', DIM + C.gray)
+      pushCentered('A/D cambia la dificultad', DIM + C.gray)
       push('', null)
       pushCentered('Aleph Hackathon — Pears Track', DIM + C.brightGreen)
       pushCentered('Joel Serrudo · Lautaro Aponte', DIM + C.gray)
@@ -374,7 +382,54 @@ class TerminalRenderer {
       )
     }
 
+    if (world.itemChoice) {
+      const modal = this._itemChoiceLines(world.itemChoice)
+      const modalTop = arenaTop + 1 + Math.max(0, Math.floor((arenaH - modal.length) / 2))
+      const modalWidth = modal[0].text.length
+      const modalLeft = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - modalWidth) / 2))
+      for (let r = 0; r < modal.length && modalTop + r < rows; r++) {
+        const { text, color } = modal[r]
+        for (let c = 0; c < text.length && modalLeft + c < cols; c++) {
+          grid[modalTop + r][modalLeft + c] = color ? colored(color, text[c]) : text[c]
+        }
+      }
+    }
+
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  // A pause-and-pick modal drawn over the (frozen) arena, in the same
+  // boxed style as the sidebar/menu — every ITEM_CHOICE_LEVEL_INTERVAL
+  // levels in world.js.
+  _itemChoiceLines(choice) {
+    const width = 28
+    const inner = width - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('¡SUBISTE DE NIVEL!', BOLD + C.brightGreen)
+    pushCentered('Elegí un objeto', DIM + C.gray)
+    push('', null)
+    for (let i = 0; i < choice.options.length; i++) {
+      const def = choice.options[i]
+      const isSelected = i === choice.selected
+      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      const label = pad(pointer + def.name, inner - 3) + ' ' + def.symbol
+      const color = isSelected ? BOLD + C.brightYellow : ITEM_TYPE_COLORS[def.type] || C.white
+      push(label, color)
+    }
+    push('', null)
+    pushCentered('W/S elegir · Espacio', DIM + C.gray)
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+    return lines
   }
 
   _panelLines(world) {

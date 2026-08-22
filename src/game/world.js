@@ -7,6 +7,7 @@ const { spawnPickup } = require('../entities/pickup')
 const { spawnBoss } = require('../entities/boss')
 const enemyGenerator = require('./enemyGenerator')
 const experienceApi = require('./experience')
+const difficultyApi = require('./difficulty')
 const items = require('../items')
 const bosses = require('../bosses')
 
@@ -17,6 +18,8 @@ const PICKUP_INTERVAL_MS = [7000, 13000]
 const BOSS_INTRO_MS = 1800 // how long the "boss appears" banner stays on screen
 const BOSS_DEATH_EFFECT_MS = 700
 const LEVEL_UP_BANNER_MS = 1600
+const ITEM_CHOICE_LEVEL_INTERVAL = 2 // offer a pick every N levels
+const ITEM_CHOICE_OPTIONS = 3
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -30,12 +33,17 @@ function steerToward(vel, targetAngle, maxTurn) {
 }
 
 class World {
-  constructor({ rng, width, height }) {
+  constructor({ rng, width, height, difficulty }) {
     this.rng = rng
     this.width = width
     this.height = height
+    this.difficulty = difficultyApi.byId(difficulty)
 
-    this.player = shipApi.createShip({ x: width / 2, y: height / 2 })
+    this.player = shipApi.createShip({
+      x: width / 2,
+      y: height / 2,
+      startLives: this.difficulty.startLives
+    })
     this.asteroids = []
     this.projectiles = []
     this.pickups = []
@@ -47,6 +55,8 @@ class World {
 
     this.experience = experienceApi.create()
     this.levelUpMs = 0
+    this.itemChoice = null
+    this._queuedItemChoices = 0
     this.wave = 1
     this.gameOver = false
     this.victory = false
@@ -70,13 +80,18 @@ class World {
   }
 
   // Rolls a procedural wave plan and queues it; enemies pour in over time
-  // as _updateEnemySpawns drains the queue.
+  // as _updateEnemySpawns drains the queue. The generator scales its
+  // count/tier/speed curve off `wave` alone, so difficulty is applied by
+  // feeding it a biased wave number instead of touching enemyGenerator.js
+  // itself — `this.wave` (used for the HUD and boss hp scaling) is
+  // unaffected.
   _spawnWave() {
+    const effectiveWave = Math.max(1, this.wave + this.difficulty.waveBias)
     const plan = enemyGenerator.createWavePlan({
       rng: this.rng,
       width: this.width,
       height: this.height,
-      wave: this.wave,
+      wave: effectiveWave,
       matchStart: this.wave === 1
     })
     this.pendingEnemies = plan.entries
@@ -99,7 +114,8 @@ class World {
     this.boss = spawnBoss(def, {
       x: this.width / 2,
       y: 4,
-      wave: this.wave
+      wave: this.wave,
+      hpMultiplier: this.difficulty.bossHpMul
     })
     this.bossIntroMs = BOSS_INTRO_MS
     this.setStatus(`Jefe: ${def.name}`)
@@ -107,6 +123,14 @@ class World {
 
   update(dtMs, input) {
     if (this.gameOver || this.victory) return
+
+    // A pending item choice pauses the whole simulation (no enemy/
+    // projectile/timer updates) until the player picks one, same as a
+    // classic roguelite level-up screen.
+    if (this.itemChoice) {
+      this._updateItemChoice(input)
+      return
+    }
 
     const dt = dtMs / 1000
     if (this.bossIntroMs > 0) this.bossIntroMs = Math.max(0, this.bossIntroMs - dtMs)
@@ -374,8 +398,9 @@ class World {
   _destroyAsteroid(asteroid) {
     if (asteroid.hp > 0) return
     this.player.score += asteroid.tier === 'large' ? 20 : asteroid.tier === 'medium' ? 35 : 50
+    const levelBefore = this.experience.level
     experienceApi.grantForTier(this.experience, asteroid.tier)
-    this._announceLevelUps()
+    this._announceLevelUps(levelBefore)
     const fragments = asteroidApi.split(this.rng, asteroid)
     this.asteroids.push(...fragments)
   }
@@ -404,20 +429,72 @@ class World {
     const p = this.player
     this.pickups = this.pickups.filter((pk) => {
       if (vector.distance(p.pos, pk.pos) > p.radius + pk.radius) return true
-
-      const def = items.byId(pk.itemId)
-      if (def.type === 'weapon') {
-        shipApi.unlockWeapon(p, def.id)
-        if (!def.unlimitedAmmo) p.ammo[def.id] = (p.ammo[def.id] ?? 0) + def.ammoPerPickup
-      } else if (def.type === 'ability') {
-        p.abilities.add(def.id)
-        if (!def.unlimitedAmmo) p.ammo[def.id] = (p.ammo[def.id] ?? 0) + def.ammoPerPickup
-      } else if (def.onPickup) {
-        def.onPickup({ player: p, world: this })
-      }
+      this._applyItemToPlayer(items.byId(pk.itemId))
       p.score += 5
       return false
     })
+  }
+
+  // Shared by field pickups and level-up item choices: unlocks a weapon
+  // (+ammo), grants an ability (+ammo), or runs a plain pickup's onPickup
+  // effect (e.g. life.js granting an extra life).
+  _applyItemToPlayer(def) {
+    const p = this.player
+    if (def.type === 'weapon') {
+      shipApi.unlockWeapon(p, def.id)
+      if (!def.unlimitedAmmo) p.ammo[def.id] = (p.ammo[def.id] ?? 0) + def.ammoPerPickup
+    } else if (def.type === 'ability') {
+      p.abilities.add(def.id)
+      if (!def.unlimitedAmmo) p.ammo[def.id] = (p.ammo[def.id] ?? 0) + def.ammoPerPickup
+    } else if (def.onPickup) {
+      def.onPickup({ player: p, world: this })
+    }
+  }
+
+  // Offers ITEM_CHOICE_OPTIONS unique random items from the field pool —
+  // a partial Fisher-Yates shuffle so there are no duplicate options.
+  _openItemChoice() {
+    const pool = [...items.FIELD_POOL]
+    const n = Math.min(ITEM_CHOICE_OPTIONS, pool.length)
+    for (let i = 0; i < n; i++) {
+      const j = this.rng.int(i, pool.length - 1)
+      ;[pool[i], pool[j]] = [pool[j], pool[i]]
+    }
+    this.itemChoice = {
+      options: pool.slice(0, n),
+      selected: 0,
+      _prevUp: false,
+      _prevDown: false,
+      _prevConfirm: false
+    }
+  }
+
+  // Edge-triggered nav/confirm, same pattern as menu.js — input.up/down/
+  // fire are level-triggered (held-state) so comparing against last tick
+  // is what turns them into a single move/confirm per keypress.
+  _updateItemChoice(input) {
+    const choice = this.itemChoice
+    const upEdge = input.up && !choice._prevUp
+    const downEdge = input.down && !choice._prevDown
+    const confirmEdge = input.fire && !choice._prevConfirm
+    choice._prevUp = input.up
+    choice._prevDown = input.down
+    choice._prevConfirm = input.fire
+
+    const n = choice.options.length
+    if (upEdge) choice.selected = (choice.selected - 1 + n) % n
+    if (downEdge) choice.selected = (choice.selected + 1) % n
+
+    if (confirmEdge) {
+      const def = choice.options[choice.selected]
+      this._applyItemToPlayer(def)
+      this.setStatus(`Elegiste: ${def.name}`)
+      this.itemChoice = null
+      if (this._queuedItemChoices > 0) {
+        this._queuedItemChoices -= 1
+        this._openItemChoice()
+      }
+    }
   }
 
   _onBossDefeated() {
@@ -430,8 +507,9 @@ class World {
       defId: this.boss.defId
     })
     this.player.score += 200 * this.wave
+    const levelBefore = this.experience.level
     experienceApi.grant(this.experience, experienceApi.BOSS_XP_PERCENT)
-    this._announceLevelUps()
+    this._announceLevelUps(levelBefore)
     this.setStatus(`${this.boss.name} derrotado`)
     this.boss = null
     this.wave += 1
@@ -440,12 +518,23 @@ class World {
 
   // A level-up triggers a brief banner (rendered in the arena, like the
   // boss intro) on top of the persistent status-line message, since it's
-  // a bigger deal than most HUD status updates.
-  _announceLevelUps() {
+  // a bigger deal than most HUD status updates. Every ITEM_CHOICE_LEVEL_
+  // INTERVAL levels also opens an item choice — queued rather than shown
+  // all at once if a single XP grant crossed more than one such
+  // threshold (e.g. one boss kill jumping several levels at once).
+  _announceLevelUps(levelBefore) {
     if (this.experience.lastLevelUps > 0) {
       this.setStatus(`¡Subiste a nivel ${this.experience.level}!`)
       this.levelUpMs = LEVEL_UP_BANNER_MS
       this.experience.lastLevelUps = 0
+
+      const thresholdsCrossed =
+        Math.floor(this.experience.level / ITEM_CHOICE_LEVEL_INTERVAL) -
+        Math.floor(levelBefore / ITEM_CHOICE_LEVEL_INTERVAL)
+      if (thresholdsCrossed > 0) {
+        this._queuedItemChoices += thresholdsCrossed - 1
+        this._openItemChoice()
+      }
     }
   }
 
