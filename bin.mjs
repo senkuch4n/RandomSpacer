@@ -7,9 +7,11 @@ import path from 'bare-path'
 import pkg from './package.json'
 import App from './app.js'
 import rngModule from './src/engine/rng.js'
+import congruentialModule from './src/engine/congruential.js'
 import gameLoop from './src/game/loop.js'
 
 const { createRng } = rngModule
+const { createCongruential } = congruentialModule
 const { startGame } = gameLoop
 
 const appName = pkg.productName || pkg.name
@@ -93,7 +95,7 @@ process.on('unhandledRejection', (err) => {
 try {
   await app.ready()
 
-  const rng = createRng()
+  const rng = createRng({ source: createCongruential() })
   game = startGame({
     rng,
     onExit: (code) => shutdown(code ?? 0)

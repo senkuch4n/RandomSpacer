@@ -14,14 +14,14 @@ Then run the installed `randomspace` binary in a real terminal (raw keyboard inp
 
 **Controls**
 
-| Key | Action |
-| --- | --- |
-| `A`/`D` or `←`/`→` | Rotate |
-| `W` or `↑` | Thrust |
-| `Space` | Fire current weapon |
-| `E` / `Tab` | Cycle weapon |
-| `X` | Use ability (shockwave) |
-| `Q` / `Ctrl+C` | Quit |
+| Key                | Action                  |
+| ------------------ | ----------------------- |
+| `A`/`D` or `←`/`→` | Rotate                  |
+| `W` or `↑`         | Thrust                  |
+| `Space`            | Fire current weapon     |
+| `E` / `Tab`        | Cycle weapon            |
+| `X`                | Use ability (shockwave) |
+| `Q` / `Ctrl+C`     | Quit                    |
 
 ## What it is
 
@@ -84,10 +84,15 @@ npm start -- --updates
 
 ## Deploying an update (for anyone continuing this after the hackathon)
 
-1. Change game code under `src/` (e.g. add a boss to `src/bosses/index.js`).
-2. `npm run make:<platform>-<arch>` only if native/runtime deps changed — pure JS/game-logic changes don't need a binary rebuild, they ship straight through staging.
-3. `pear stage pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy .` (dry-run first).
-4. Keep `pear seed pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy` running somewhere reachable — installed copies only get the update if a seeder is up.
+**Always rebuild the standalone binary for every release, even for pure JS/game-logic changes.** `bare-build --standalone` bakes the entire `src/` tree into the compiled binary at build time — the installed app runs from that frozen bundle, not from loose files on the drive. Staging only `src/*.js` without rebuilding produces an update that _detects_ and _applies_ successfully (you'll see the `[updater]` messages) but delivers byte-identical binary content, so nothing actually changes after the restart. This was the actual cause of an OTA "it never updates" issue during this hackathon — not a bug in Pear's updater.
+
+1. Change game code under `src/` (e.g. add a boss to `src/bosses/index.js`) and bump `version` in `package.json`.
+2. Rebuild the binary for every platform you ship: `npm run make:darwin-arm64`, `make:darwin-x64`, `make:linux-arm64`, `make:linux-x64`, `make:win32-arm64`, `make:win32-x64`.
+3. Assemble `by-arch/<platform-arch>/app/<name>` as a **flat executable file** for each platform (`<name>.exe` on Windows) — do not wrap it in a same-named directory; `pear-runtime-updater`'s swap-and-restart expects `by-arch/<host>/app/<name>` to be a single file matching the installed binary 1:1. `pear build`'s CLI forces a directory input, so build this by hand instead: `mkdir -p by-arch/<arch>/app && cp out/<arch>/randomspace by-arch/<arch>/app/randomspace`.
+4. `pear stage pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy .` (dry-run first) — stage `package.json`, `src/`, and the fresh `by-arch/` together.
+5. Keep `pear seed pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy` running somewhere reachable — installed copies only get the update if a seeder is up.
+
+Verified end-to-end during this hackathon: an already-running installed copy detected a staged update, downloaded it, applied it, and after a manual restart came back as a flat single-file binary (no nesting) showing the new version and the new content.
 
 Note: only production `dependencies` (not `devDependencies` like `bare-build`, `prettier`, `lunte`, `brittle`) should be staged — see `.gitignore` and stage from a clean `npm ci --omit=dev` copy if staging from a dir that has dev tooling installed, to avoid shipping hundreds of MB of build toolchain into the P2P drive.
 
@@ -96,7 +101,7 @@ Note: only production `dependencies` (not `devDependencies` like `bare-build`, `
 - `INVALID_URL: Invalid URL 'pear://<YOUR_KEY_HERE>'` means the `upgrade` link in `package.json` is still a placeholder. Run `pear touch` and replace it.
 - On the daemon variant (not used here), updater errors go to `<storage>/updates.log` instead of stdout.
 - If `pear install` reports `Not found: .../by-arch/<arch>/app/<name>`, the staged `by-arch` folder name must exactly match the lowercase `name` field in `package.json`. Keep `name` and `productName` identical (both lowercase here) — `pear build`'s `--<platform>-app` flags require the input directory to be named after `productName`, and mismatched casing between the two fields is a good way to end up with two different paths pointing at what should be the same install.
-- **The installed binary nests one directory deeper each time an in-app OTA update is applied.** A fresh `pear install` gives you `<install-dir>/randomspace` as a plain executable file. Once the running app detects+applies an update and you relaunch, that path becomes a directory and the executable moves to `<install-dir>/randomspace/randomspace` (then `.../randomspace/randomspace/randomspace` after the next applied update, and so on). This is `hello-pear-worker`'s own update-apply behavior, not a build issue — a fresh `pear install` always gives you a flat, current copy regardless of how many updates have shipped, so judges installing once at judging time won't see this. To always find the current binary regardless of nesting depth after repeated updates: `find <install-dir> -type f -name randomspace | sort | tail -1` (the deepest match is the latest).
+- If the installed path ever turns into a nested directory after an applied update (`<install-dir>/randomspace` becoming a folder containing another `randomspace`), the most likely cause is `by-arch/<host>/app/<name>` not being a flat file when it was staged (see "Deploying an update" above) — `pear-runtime-updater`'s swap-and-restart does a 1:1 file swap and expects both sides to be plain files. A clean `pear sidecar shutdown` + delete the install dir and `~/Library/Application Support/<name>` + fresh `pear install` always recovers a flat, current copy.
 - Raw keyboard input requires a real TTY; running the binary with stdout/stdin redirected will fail with `ENOTTY`/`EINVAL` on the renderer.
 
 <!-- Reference Links -->
