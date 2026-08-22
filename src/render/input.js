@@ -76,7 +76,8 @@ class InputManager {
         if (this.onQuit) this.onQuit()
       } else if (lower === 'a') this._mark('left')
       else if (lower === 'd') this._mark('right')
-      else if (lower === 'w') this._mark('thrust')
+      else if (lower === 'w') this._mark('up')
+      else if (lower === 's') this._mark('down')
       else if (ch === ' ') this._mark('fire')
       else if (lower === 'e' || ch === '\t') this._cyclePresses += 1
       else if (lower === 'x') this._mark('ability')
@@ -97,9 +98,10 @@ class InputManager {
     if (cycleWeapon) this._cyclePresses = 0
 
     return {
-      left: this._held('left') || this._held('a'),
-      right: this._held('right') || this._held('d'),
-      thrust: this._held('up') || this._held('thrust'),
+      up: this._held('up'),
+      down: this._held('down'),
+      left: this._held('left'),
+      right: this._held('right'),
       fire: this._held('fire'),
       cycleWeapon,
       activateAbility: this._held('ability')

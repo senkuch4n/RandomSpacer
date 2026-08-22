@@ -4,37 +4,27 @@ const tty = require('bare-tty')
 const items = require('../items')
 const pkg = require('../../package.json')
 
-const HUD_ROWS = 3
 // Single-width Unicode arrows read as a ship's facing direction much more
 // clearly than plain ASCII slashes, without needing a multi-cell sprite.
 const SHIP_GLYPHS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗']
+
+// HUD lives in a fixed-width left column; the arena is centered in
+// whatever terminal space remains to its right.
+const SIDEBAR_WIDTH = 22
+const SIDEBAR_GAP = 2
 
 // The arena is capped well below typical terminal size so weapon ranges
 // (tuned in src/entities/bullet.js) are enough to cross it — a maximized
 // terminal would otherwise make bullets vanish long before reaching the
 // far side.
-const MAX_ARENA_WIDTH = 40
-const MAX_ARENA_HEIGHT = 20
+const MAX_ARENA_WIDTH = 50
+const MAX_ARENA_HEIGHT = 24
 
 function shipGlyph(angle) {
   const twoPi = Math.PI * 2
   const normalized = ((angle % twoPi) + twoPi) % twoPi
   const index = Math.round(normalized / (twoPi / 8)) % 8
   return SHIP_GLYPHS[index]
-}
-
-function plot(grid, cols, rows, x, y, symbol) {
-  const cx = Math.max(0, Math.min(cols - 1, Math.round(x)))
-  const cy = Math.max(0, Math.min(rows - 1, Math.round(y)))
-  grid[cy][cx] = symbol
-}
-
-function plotRing(grid, cols, rows, cx, cy, radius, symbol) {
-  const steps = Math.max(8, Math.round(radius * 2))
-  for (let i = 0; i < steps; i++) {
-    const a = (i / steps) * Math.PI * 2
-    plot(grid, cols, rows, cx + Math.cos(a) * radius, cy + Math.sin(a) * radius * 0.6, symbol)
-  }
 }
 
 class TerminalRenderer {
@@ -51,8 +41,8 @@ class TerminalRenderer {
   }
 
   arenaSize() {
-    const availWidth = Math.max(10, this.columns)
-    const availHeight = Math.max(5, this.rows - HUD_ROWS)
+    const availWidth = Math.max(10, this.columns - SIDEBAR_WIDTH - SIDEBAR_GAP)
+    const availHeight = Math.max(5, this.rows)
     return {
       width: Math.min(MAX_ARENA_WIDTH, availWidth),
       height: Math.min(MAX_ARENA_HEIGHT, availHeight)
@@ -77,95 +67,136 @@ class TerminalRenderer {
 
   render(world) {
     const cols = this.columns
-    const totalRows = Math.max(5, this.rows - HUD_ROWS)
+    const rows = this.rows
+    const innerWidth = Math.max(1, cols - SIDEBAR_WIDTH - SIDEBAR_GAP)
     // The simulated arena (world.width/height) is capped smaller than the
-    // terminal by arenaSize() — plot against those bounds, but still fill
-    // a full-terminal-width grid so leftover content outside the arena is
-    // blanked out every frame instead of lingering.
-    const arenaW = Math.min(world.width, cols)
-    const arenaH = Math.min(world.height, totalRows)
+    // available space by arenaSize() — plot against those bounds, but
+    // still fill the full terminal so leftover content is blanked out
+    // every frame instead of lingering, and center the arena in the
+    // space to the right of the sidebar.
+    const arenaW = Math.min(world.width, innerWidth)
+    const arenaH = Math.min(world.height, rows)
+    const offsetX = SIDEBAR_WIDTH + SIDEBAR_GAP + Math.max(0, Math.floor((innerWidth - arenaW) / 2))
+    const offsetY = Math.max(0, Math.floor((rows - arenaH) / 2))
 
-    const grid = new Array(totalRows)
-    for (let r = 0; r < totalRows; r++) grid[r] = new Array(cols).fill(' ')
+    const grid = new Array(rows)
+    for (let r = 0; r < rows; r++) grid[r] = new Array(cols).fill(' ')
+
+    const plot = (x, y, symbol) => {
+      const cx = offsetX + Math.max(0, Math.min(arenaW - 1, Math.round(x)))
+      const cy = offsetY + Math.max(0, Math.min(arenaH - 1, Math.round(y)))
+      if (cy >= 0 && cy < rows && cx >= 0 && cx < cols) grid[cy][cx] = symbol
+    }
+
+    const plotRing = (cx0, cy0, radius, symbol) => {
+      const steps = Math.max(8, Math.round(radius * 2))
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2
+        plot(cx0 + Math.cos(a) * radius, cy0 + Math.sin(a) * radius * 0.6, symbol)
+      }
+    }
 
     for (let x = 0; x < arenaW; x++) {
-      grid[0][x] = '~'
-      grid[arenaH - 1][x] = '~'
+      plot(x, 0, '~')
+      plot(x, arenaH - 1, '~')
     }
     for (let y = 0; y < arenaH; y++) {
-      grid[y][0] = '~'
-      grid[y][arenaW - 1] = '~'
+      plot(0, y, '~')
+      plot(arenaW - 1, y, '~')
     }
 
-    for (const a of world.asteroids) plot(grid, arenaW, arenaH, a.pos.x, a.pos.y, a.symbol)
+    for (const a of world.asteroids) plot(a.pos.x, a.pos.y, a.symbol)
     for (const pk of world.pickups) {
       const def = items.byId(pk.itemId)
-      plot(grid, arenaW, arenaH, pk.pos.x, pk.pos.y, def ? def.symbol : '?')
+      plot(pk.pos.x, pk.pos.y, def ? def.symbol : '?')
     }
-    for (const proj of world.projectiles) {
-      plot(grid, arenaW, arenaH, proj.pos.x, proj.pos.y, proj.symbol)
-    }
+    for (const proj of world.projectiles) plot(proj.pos.x, proj.pos.y, proj.symbol)
 
     for (const e of world.effects) {
       if (e.type === 'shockwave-ring') {
         const radius = e.maxRadius * (e.ageMs / e.ttlMs)
-        plotRing(grid, arenaW, arenaH, e.pos.x, e.pos.y, radius, 'o')
+        plotRing(e.pos.x, e.pos.y, radius, 'o')
       }
     }
 
-    if (world.boss) {
-      plot(grid, arenaW, arenaH, world.boss.pos.x, world.boss.pos.y, world.boss.symbol)
-    }
+    if (world.boss) plot(world.boss.pos.x, world.boss.pos.y, world.boss.symbol)
 
     const p = world.player
     const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
-    if (p.alive && !blinking) plot(grid, arenaW, arenaH, p.pos.x, p.pos.y, shipGlyph(p.angle))
+    if (p.alive && !blinking) plot(p.pos.x, p.pos.y, shipGlyph(p.angle))
 
-    const lines = [this._hudLine1(world), this._hudLine2(world), '-'.repeat(cols)]
-    for (const row of grid) lines.push(row.join(''))
+    const sidebar = this._sidebarLines(world)
+    for (let r = 0; r < rows; r++) {
+      const text = (sidebar[r] || '').slice(0, SIDEBAR_WIDTH)
+      for (let c = 0; c < text.length; c++) grid[r][c] = text[c]
+    }
 
     if (world.gameOver) {
       const msg = ` GAME OVER — puntaje: ${world.player.score} — Q para salir `
-      this._overlay(lines, HUD_ROWS, cols, arenaW, arenaH, msg)
+      this._overlay(grid, cols, offsetX, offsetY, arenaW, arenaH, msg)
     }
 
-    this.out.write('\x1b[H' + lines.join('\r\n'))
+    this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  _overlay(lines, hudRows, cols, arenaW, arenaH, msg) {
-    const row = hudRows + Math.floor(arenaH / 2)
-    const col = Math.max(0, Math.floor((arenaW - msg.length) / 2))
-    const padded = msg.padStart(col + msg.length).padEnd(cols)
-    lines[row] = padded.slice(0, cols)
+  _overlay(grid, cols, offsetX, offsetY, arenaW, arenaH, msg) {
+    const row = offsetY + Math.floor(arenaH / 2)
+    if (row < 0 || row >= grid.length) return
+    const col = offsetX + Math.max(0, Math.floor((arenaW - msg.length) / 2))
+    for (let i = 0; i < msg.length; i++) {
+      const c = col + i
+      if (c >= 0 && c < cols) grid[row][c] = msg[i]
+    }
   }
 
-  _hudLine1(world) {
+  _sidebarLines(world) {
     const p = world.player
     const weaponId = p.weaponOrder[p.currentWeaponIndex]
     const weaponDef = items.byId(weaponId)
     const ammo = weaponDef.unlimitedAmmo ? '∞' : (p.ammo[weaponId] ?? 0)
-    const lives = 'v'.repeat(Math.max(0, p.lives))
+    const lives = 'v'.repeat(Math.max(0, p.lives)) || '-'
 
-    let bossInfo = ''
-    if (world.boss) {
-      const pct = Math.max(0, Math.round((world.boss.hp / world.boss.maxHp) * 20))
-      bossInfo = ` | ${world.boss.name} [${'#'.repeat(pct)}${'.'.repeat(20 - pct)}]`
+    const lines = [
+      'RandomSpace',
+      `v${pkg.version}`,
+      '',
+      `Vidas:  ${lives}`,
+      `Score:  ${p.score}`,
+      `Ola:    ${world.wave}`,
+      '',
+      'Arma:',
+      ` ${weaponDef.name}`,
+      ` Municion: ${ammo}`
+    ]
+
+    const abilityLines = [...p.abilities].map((id) => {
+      const def = items.byId(id)
+      const a = def.unlimitedAmmo ? '∞' : (p.ammo[id] ?? 0)
+      return `${def.name}: ${a}`
+    })
+    if (abilityLines.length > 0) {
+      lines.push('', 'Habilidad:')
+      for (const l of abilityLines) lines.push(` ${l}`)
     }
 
-    return `Vidas:${lives || '-'} Score:${p.score} Ola:${world.wave} Arma:${weaponDef.name}(${ammo})${bossInfo}`
-  }
+    if (world.boss) {
+      const pct = Math.max(0, Math.round((world.boss.hp / world.boss.maxHp) * 10))
+      lines.push('', `Jefe: ${world.boss.name}`, `[${'#'.repeat(pct)}${'.'.repeat(10 - pct)}]`)
+    }
 
-  _hudLine2(world) {
-    const abilities = [...world.player.abilities]
-      .map((id) => {
-        const def = items.byId(id)
-        const ammo = def.unlimitedAmmo ? '∞' : (world.player.ammo[id] ?? 0)
-        return `${def.name}(${ammo})`
-      })
-      .join(' ')
+    lines.push(
+      '',
+      'Controles:',
+      'WASD  mover',
+      'Espacio  disparar',
+      'E  cambiar arma',
+      'X  habilidad',
+      'Q  salir'
+    )
 
-    const status = world.statusMessage ? ` | ${world.statusMessage}` : ''
-    return `[A/D o flechas: girar] [W: impulso] [espacio: disparar] [E: cambiar arma] [X: ${abilities || 'sin habilidad'}] v${pkg.version}${status}`
+    if (world.statusMessage) lines.push('', world.statusMessage)
+
+    return lines
   }
 }
 
