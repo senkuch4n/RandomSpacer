@@ -89,12 +89,12 @@ class TerminalRenderer {
     for (let r = 0; r < totalRows; r++) grid[r] = new Array(cols).fill(' ')
 
     for (let x = 0; x < arenaW; x++) {
-      grid[0][x] = '#'
-      grid[arenaH - 1][x] = '#'
+      grid[0][x] = '~'
+      grid[arenaH - 1][x] = '~'
     }
     for (let y = 0; y < arenaH; y++) {
-      grid[y][0] = '#'
-      grid[y][arenaW - 1] = '#'
+      grid[y][0] = '~'
+      grid[y][arenaW - 1] = '~'
     }
 
     for (const a of world.asteroids) plot(grid, arenaW, arenaH, a.pos.x, a.pos.y, a.symbol)
