@@ -13,6 +13,8 @@ const THRUST_ACCEL = 22
 const DRAG = 0.985
 const MAX_SPEED = 20
 const PICKUP_INTERVAL_MS = [7000, 13000]
+const BOSS_INTRO_MS = 1800 // how long the "boss appears" banner stays on screen
+const BOSS_DEATH_EFFECT_MS = 700
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -37,6 +39,7 @@ class World {
     this.pickups = []
     this.effects = []
     this.boss = null
+    this.bossIntroMs = 0
     this.pendingEnemies = []
     this.waveElapsedMs = 0
 
@@ -93,6 +96,7 @@ class World {
       y: 4,
       wave: this.wave
     })
+    this.bossIntroMs = BOSS_INTRO_MS
     this.setStatus(`Jefe: ${def.name}`)
   }
 
@@ -100,6 +104,7 @@ class World {
     if (this.gameOver || this.victory) return
 
     const dt = dtMs / 1000
+    if (this.bossIntroMs > 0) this.bossIntroMs = Math.max(0, this.bossIntroMs - dtMs)
     this._updatePlayer(dt, dtMs, input)
     this._updateProjectiles(dt, dtMs)
     this._updateEnemySpawns(dtMs)
@@ -407,6 +412,14 @@ class World {
   }
 
   _onBossDefeated() {
+    this.effects.push({
+      type: 'boss-explosion',
+      pos: { x: this.boss.pos.x, y: this.boss.pos.y },
+      ageMs: 0,
+      ttlMs: BOSS_DEATH_EFFECT_MS,
+      maxRadius: this.boss.radius * 2.5,
+      defId: this.boss.defId
+    })
     this.player.score += 200 * this.wave
     this.setStatus(`${this.boss.name} derrotado`)
     this.boss = null

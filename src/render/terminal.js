@@ -32,9 +32,23 @@ const ASTEROID_COLOR = { large: C.white, medium: C.gray, small: DIM + C.gray }
 const PLAYER_SHOT_COLOR = C.brightYellow
 const BOSS_SHOT_COLOR = C.brightRed
 const BOSS_COLOR = BOLD + C.brightMagenta
+// Each boss gets its own identity color (ship glyph, HUD name/HP bar,
+// intro banner, death burst) so they read as distinct threats rather
+// than palette-swapped copies of the same enemy.
+const BOSS_COLORS = {
+  sentinel: BOLD + C.brightCyan,
+  cutter: BOLD + C.brightRed,
+  'swarm-mother': BOLD + C.brightGreen,
+  turret: BOLD + C.brightYellow,
+  leviathan: BOLD + C.brightMagenta
+}
 const PICKUP_COLOR = C.brightGreen
 const RING_COLOR = C.cyan
 const BORDER_COLOR = C.cyan
+
+function bossColor(boss) {
+  return (boss && BOSS_COLORS[boss.defId]) || BOSS_COLOR
+}
 
 // The HUD lives in a fixed-width boxed panel on the left; the arena is
 // centered in whatever terminal space remains to its right. Both panels
@@ -244,26 +258,54 @@ class TerminalRenderer {
       if (e.type === 'shockwave-ring') {
         const radius = e.maxRadius * (e.ageMs / e.ttlMs)
         plotRing(e.pos.x, e.pos.y, radius, colored(RING_COLOR, 'o'))
+      } else if (e.type === 'boss-explosion') {
+        // A quick burst of two expanding rings (not one, so it reads as an
+        // explosion rather than a slow-moving circle like the shockwave).
+        const t = e.ageMs / e.ttlMs
+        const color = bossColor({ defId: e.defId })
+        plotRing(e.pos.x, e.pos.y, e.maxRadius * t, colored(color, '*'))
+        plotRing(e.pos.x, e.pos.y, e.maxRadius * t * 0.5, colored(BOLD + C.white, '*'))
       }
     }
 
-    if (world.boss) plot(world.boss.pos.x, world.boss.pos.y, colored(BOSS_COLOR, world.boss.symbol))
+    if (world.boss) {
+      plot(world.boss.pos.x, world.boss.pos.y, colored(bossColor(world.boss), world.boss.symbol))
+    }
 
     const p = world.player
     const blinking = p.invulnerableMs > 0 && Math.floor(p.invulnerableMs / 100) % 2 === 0
     if (p.alive && !blinking) plot(p.pos.x, p.pos.y, colored(SHIP_COLOR, shipGlyph(p.angle)))
 
-    if (world.gameOver) {
-      const msg = ` GAME OVER — puntaje: ${world.player.score} — Q para salir `
-      const row = arenaTop + 1 + Math.floor(arenaH / 2)
+    // Writes `msg` as a single grid cell (the rest of its cells are left
+    // empty, not overwritten) so a multi-character ANSI-colored string
+    // survives the per-cell `row.join('')` at the end without being torn
+    // apart the way slicing an already-colored string would (see the
+    // per-character coloring above for why that matters).
+    const plotBanner = (rowOffset, msg, color) => {
+      const row = arenaTop + 1 + rowOffset
       const col = arenaLeft + 1 + Math.max(0, Math.floor((arenaW - msg.length) / 2))
-      if (row >= 0 && row < rows) {
-        const colored_ = colored(BOLD + C.brightRed, msg)
-        for (let i = 0; i < msg.length; i++) {
-          const c = col + i
-          if (c >= 0 && c < cols) grid[row][c] = i === 0 ? colored_ : ''
-        }
+      if (row < 0 || row >= rows) return
+      const wrapped = colored(color, msg)
+      for (let i = 0; i < msg.length; i++) {
+        const c = col + i
+        if (c >= 0 && c < cols) grid[row][c] = i === 0 ? wrapped : ''
       }
+    }
+
+    if (world.bossIntroMs > 0 && world.boss) {
+      const blinkFast = Math.floor(world.bossIntroMs / 250) % 2 === 0
+      plotBanner(Math.floor(arenaH / 2) - 1, `¡JEFE!`, BOLD + bossColor(world.boss))
+      if (blinkFast) {
+        plotBanner(Math.floor(arenaH / 2) + 1, world.boss.name.toUpperCase(), bossColor(world.boss))
+      }
+    }
+
+    if (world.gameOver) {
+      plotBanner(
+        Math.floor(arenaH / 2),
+        ` GAME OVER — puntaje: ${world.player.score} — Q para salir `,
+        BOLD + C.brightRed
+      )
     }
 
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
@@ -305,8 +347,8 @@ class TerminalRenderer {
     if (world.boss) {
       const pct = Math.max(0, Math.round((world.boss.hp / world.boss.maxHp) * 12))
       push(pad('', inner), null)
-      push(pad(`Jefe: ${world.boss.name}`, inner), BOLD + C.brightMagenta)
-      push(pad(`[${'█'.repeat(pct)}${'░'.repeat(12 - pct)}]`, inner), C.brightRed)
+      push(pad(`Jefe: ${world.boss.name}`, inner), bossColor(world.boss))
+      push(pad(`[${'█'.repeat(pct)}${'░'.repeat(12 - pct)}]`, inner), bossColor(world.boss))
     }
 
     push(pad('', inner), null)
