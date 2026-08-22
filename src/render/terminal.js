@@ -2,6 +2,7 @@
 
 const tty = require('bare-tty')
 const items = require('../items')
+const experienceApi = require('../game/experience')
 const pkg = require('../../package.json')
 
 const RESET = '\x1b[0m'
@@ -358,6 +359,13 @@ class TerminalRenderer {
       }
     }
 
+    if (world.levelUpMs > 0) {
+      const blinkFast = Math.floor(world.levelUpMs / 200) % 2 === 0
+      if (blinkFast) {
+        plotBanner(2, `¡NIVEL ${world.experience.level}!`, BOLD + C.brightGreen)
+      }
+    }
+
     if (world.gameOver) {
       plotBanner(
         Math.floor(arenaH / 2),
@@ -386,6 +394,13 @@ class TerminalRenderer {
     push(pad(`Vidas   ${hearts}`, inner), C.brightRed)
     push(pad(`Score   ${p.score}`, inner), C.brightYellow)
     push(pad(`Ola     ${world.wave}`, inner), C.brightCyan)
+    push(pad('', inner), null)
+    const xpPct = Math.max(
+      0,
+      Math.min(12, Math.round((experienceApi.percent(world.experience) / 100) * 12))
+    )
+    push(pad(`Nivel   ${world.experience.level}`, inner), C.brightGreen)
+    push(pad(`[${'█'.repeat(xpPct)}${'░'.repeat(12 - xpPct)}]`, inner), C.brightGreen)
     push(pad('', inner), null)
     push(pad('Arma', inner), C.white)
     push(pad(` ${weaponDef.name}`, inner), C.brightYellow)

@@ -6,6 +6,7 @@ const asteroidApi = require('../entities/asteroid')
 const { spawnPickup } = require('../entities/pickup')
 const { spawnBoss } = require('../entities/boss')
 const enemyGenerator = require('./enemyGenerator')
+const experienceApi = require('./experience')
 const items = require('../items')
 const bosses = require('../bosses')
 
@@ -15,6 +16,7 @@ const MAX_SPEED = 20
 const PICKUP_INTERVAL_MS = [7000, 13000]
 const BOSS_INTRO_MS = 1800 // how long the "boss appears" banner stays on screen
 const BOSS_DEATH_EFFECT_MS = 700
+const LEVEL_UP_BANNER_MS = 1600
 
 function steerToward(vel, targetAngle, maxTurn) {
   const speed = vector.length(vel)
@@ -43,6 +45,8 @@ class World {
     this.pendingEnemies = []
     this.waveElapsedMs = 0
 
+    this.experience = experienceApi.create()
+    this.levelUpMs = 0
     this.wave = 1
     this.gameOver = false
     this.victory = false
@@ -72,7 +76,8 @@ class World {
       rng: this.rng,
       width: this.width,
       height: this.height,
-      wave: this.wave
+      wave: this.wave,
+      matchStart: this.wave === 1
     })
     this.pendingEnemies = plan.entries
     this.waveElapsedMs = 0
@@ -105,6 +110,7 @@ class World {
 
     const dt = dtMs / 1000
     if (this.bossIntroMs > 0) this.bossIntroMs = Math.max(0, this.bossIntroMs - dtMs)
+    if (this.levelUpMs > 0) this.levelUpMs = Math.max(0, this.levelUpMs - dtMs)
     this._updatePlayer(dt, dtMs, input)
     this._updateProjectiles(dt, dtMs)
     this._updateEnemySpawns(dtMs)
@@ -368,6 +374,8 @@ class World {
   _destroyAsteroid(asteroid) {
     if (asteroid.hp > 0) return
     this.player.score += asteroid.tier === 'large' ? 20 : asteroid.tier === 'medium' ? 35 : 50
+    experienceApi.grantForTier(this.experience, asteroid.tier)
+    this._announceLevelUps()
     const fragments = asteroidApi.split(this.rng, asteroid)
     this.asteroids.push(...fragments)
   }
@@ -422,10 +430,23 @@ class World {
       defId: this.boss.defId
     })
     this.player.score += 200 * this.wave
+    experienceApi.grant(this.experience, experienceApi.BOSS_XP_PERCENT)
+    this._announceLevelUps()
     this.setStatus(`${this.boss.name} derrotado`)
     this.boss = null
     this.wave += 1
     this._spawnWave()
+  }
+
+  // A level-up triggers a brief banner (rendered in the arena, like the
+  // boss intro) on top of the persistent status-line message, since it's
+  // a bigger deal than most HUD status updates.
+  _announceLevelUps() {
+    if (this.experience.lastLevelUps > 0) {
+      this.setStatus(`¡Subiste a nivel ${this.experience.level}!`)
+      this.levelUpMs = LEVEL_UP_BANNER_MS
+      this.experience.lastLevelUps = 0
+    }
   }
 
   _checkProgression(dtMs) {
