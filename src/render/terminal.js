@@ -335,6 +335,7 @@ class TerminalRenderer {
       pushCentered('Joel Serrudo · Lautaro Aponte', DIM + C.gray)
       push('', null)
       pushCentered('¡Actualización P2P recibida!', BOLD + C.brightGreen)
+      pushCentered('✓ Build verificada en vivo', BOLD + C.brightMagenta)
     }
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
