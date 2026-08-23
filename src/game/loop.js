@@ -226,7 +226,7 @@ function startGame({ rng, onExit, storageDir }) {
             leaderboardApi.topEntries(leaderboardEntries, menu.rankingMode, 15)
           )
         } else {
-          renderer.renderMenu(menu)
+          renderer.renderMenu(menu, pendingStatus)
         }
       } catch (err) {
         stop(1)

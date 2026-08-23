@@ -279,7 +279,14 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  renderMenu(menu) {
+  // `status` surfaces messages that have nowhere else to go while sitting
+  // on the menu — most importantly the updater's own progress
+  // ([updater] descargando/aplicando/etc from bin.mjs's notify()), which
+  // otherwise gets silently queued (see loop.js's pendingStatus) and only
+  // ever shown once a World exists. Without this, an update landing while
+  // idle at the menu applies invisibly — nothing on screen changes until
+  // a manual restart, indistinguishable from nothing happening at all.
+  renderMenu(menu, status) {
     const cols = this.columns
     const rows = this.rows
     const width = Math.min(50, Math.max(30, cols - 4))
@@ -292,6 +299,7 @@ class TerminalRenderer {
 
     pushCentered('✦ RANDOMSPACE ✦', BOLD + C.brightCyan)
     pushCentered(`v${pkg.version}`, DIM + C.gray)
+    if (status) pushCentered(status, BOLD + C.brightCyan)
     push('', null)
 
     if (menu.screen === 'controls') {
