@@ -2,7 +2,7 @@
 
 > Terminal Asteroids-like with rotating bosses and item pickups, deployed on Pear with peer-to-peer OTA updates.
 
-Built for the **Pears Track** at [hackathon]. Started from [`hello-pear-bare`][hello-pear-bare], **`main` branch** (the updater runs `pear-runtime` inside a Bare worker thread, keeping P2P/update logic off the main thread while the game loop owns it).
+Built for the **Pears Track** at the Aleph Hackathon (Buenos Aires) by Joel Serrudo and Lautaro Aponte. Started from [`hello-pear-bare`][hello-pear-bare], **`main` branch** (the updater runs `pear-runtime` inside a Bare worker thread, keeping P2P/update logic off the main thread while the game loop owns it).
 
 ## Play it
 
@@ -14,36 +14,53 @@ Then run the installed `randomspace` binary in a real terminal (raw keyboard inp
 
 **Controls**
 
-| Key                | Action                  |
-| ------------------ | ----------------------- |
-| `A`/`D` or `←`/`→` | Rotate                  |
-| `W` or `↑`         | Thrust                  |
-| `Space`            | Fire current weapon     |
-| `E` / `Tab`        | Cycle weapon            |
-| `X`                | Use ability (shockwave) |
-| `Q` / `Ctrl+C`     | Quit                    |
+| Key                | Action                               |
+| ------------------ | ------------------------------------ |
+| `A`/`D` or `←`/`→` | Rotate                               |
+| `W` or `↑`         | Thrust                               |
+| `Space`            | Fire current weapon                  |
+| `E` / `Tab`        | Cycle weapon                         |
+| `X`                | Use ability (shockwave)              |
+| `R`                | Toggle the live ranking overlay      |
+| `Q` / `Ctrl+C`     | Menu: quit. In a match: ask to leave |
+
+`Q` during an active run opens a "¿Volver al menú?" confirmation instead of quitting outright — a second `Q` (or Enter on "No") closes it back out.
 
 ## What it is
 
-Classic Asteroids loop — rotate, thrust, shoot, dodge — with two systems layered on top:
+Classic Asteroids loop — rotate, thrust, shoot, dodge — with systems layered on top:
 
 - **Bosses.** Clearing a wave's asteroids spawns a boss from a 5-entry roster (`src/bosses/`), each with its own movement and attack pattern. The roster is exactly the kind of thing this track's OTA requirement is built for: add a boss module, register it, `pear stage` a new version, and every installed copy picks it up next run — no reinstall.
-- **Items.** The ship starts with the default shot only. Weapons (bomb, homing missile, boomerang, burst fire) and the shockwave ability spawn as field pickups and get added to `src/items/`; a life pickup heals directly. Same OTA story as bosses — new item, new file, new release.
+- **Items.** The ship starts with the default shot only. Weapons (bomb, homing missile, boomerang, burst fire, shotgun, rifle) and the shockwave ability spawn as field pickups and get added to `src/items/`; a life pickup heals directly. Same OTA story as bosses — new item, new file, new release.
 - **RNG.** All randomness (asteroid spawns, pickup rolls, boss selection) goes through `src/engine/rng.js`, a thin wrapper around one injectable source function. That's the seam for swapping in a teammate-provided RNG engine without touching game logic — see the file header for the exact contract.
 
 Player starts with **2 lives**.
 
+## Cooperativo (peer-to-peer)
+
+The "Cooperativo" menu connects two players directly over Hyperswarm — no server of ours in the middle (`src/net/coop.js`):
+
+- **Automático** — both players join the same public Hyperswarm topic and get matched with whoever else is looking right now.
+- **Crear partida / Unirse con código** — one player generates a short code, the other types it in; both derive the same private topic from it. Pairs the two players deliberately instead of leaving it to the public lobby, and rules out "we never found each other" independently of any NAT/firewall issue.
+
+Whichever peer's connection role comes out on top (a deterministic public-key comparison both sides compute independently, no handshake needed) runs the real simulation and is authoritative; the other side only sends input and renders whatever state it receives. This sidesteps needing a deterministic lockstep simulation across two machines.
+
+There's no leaderboard server either — every co-op connection exchanges each side's local top scores and merges them in (`wireLeaderboardSync` in `src/game/loop.js`), so the ranking (`R` in-game, or "Ranking" from the main menu) spreads peer to peer the same way the game itself does.
+
 ## Architecture
 
 ```
-bin.mjs              entrypoint: boots the updater (app.js -> workers/main.js) then the game
-src/engine/rng.js     injectable RNG wrapper (float/int/range/pick/weighted)
-src/engine/vector.js  2D vector helpers
-src/entities/         ship, asteroid, projectile, pickup, boss — plain data + factories
-src/items/            weapon/ability/pickup registry — OTA-friendly, see index.js
-src/bosses/           boss roster — OTA-friendly, see index.js
-src/game/world.js     simulation: physics, collisions, waves, progression
-src/game/loop.js      ties World to the renderer + input on a fixed tick
+bin.mjs                 entrypoint: boots the updater (app.js -> workers/main.js) then the game
+src/engine/rng.js       injectable RNG wrapper (float/int/range/pick/weighted)
+src/engine/vector.js    2D vector helpers
+src/entities/           ship, asteroid, projectile, pickup, boss — plain data + factories
+src/items/              weapon/ability/pickup registry — OTA-friendly, see index.js
+src/bosses/             boss roster — OTA-friendly, see index.js
+src/net/coop.js         Hyperswarm P2P session: matchmaking, host/guest role, state sync
+src/game/world.js       simulation: physics, collisions, waves, progression
+src/game/menu.js        title screen + co-op/ranking submenu state machines
+src/game/leaderboard.js local, P2P-gossiped score storage (no server)
+src/game/loop.js        ties World to the renderer + input on a fixed tick
 src/render/terminal.js  ANSI renderer (bare-tty WriteStream)
 src/render/input.js     raw-mode keyboard capture (bare-tty ReadStream)
 ```
