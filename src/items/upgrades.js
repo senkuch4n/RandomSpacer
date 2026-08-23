@@ -7,9 +7,15 @@
 // through world.js's _applyItemToPlayer into the generic onPickup branch,
 // so no special-casing was needed there.
 //
-// Each is capped so the pool can stop offering it once maxed (see
+// Each is capped so the pool can stop offering it once maxed out (see
 // availableFor) rather than letting stacks run away into degenerate
 // values (near-zero cooldowns, etc).
+//
+// Symbols MUST be single-cell ASCII (like every other item in this
+// folder): glyphs such as ⚔/⚡ are rendered two cells wide by many
+// terminal fonts, which overflows the item-choice modal's fixed-width
+// box — the row wraps, tears the box borders and visually duplicates
+// rows, and the whole board jitters every time a row's width changes.
 const DAMAGE_STEP = 0.15
 const DAMAGE_MAX = 2.2
 const RANGE_STEP = 0.2
@@ -21,7 +27,7 @@ const MAX_EXTRA_SHOTS = 3 // 1 base + 3 = 4 bullets at once, the requested cap
 const damage = {
   id: 'upgrade-damage',
   name: 'Daño mejorado',
-  symbol: '⚔',
+  symbol: '%',
   type: 'upgrade',
   fieldPickup: false,
 
@@ -36,7 +42,7 @@ const damage = {
 const range = {
   id: 'upgrade-range',
   name: 'Alcance mejorado',
-  symbol: '➤',
+  symbol: '>',
   type: 'upgrade',
   fieldPickup: false,
 
@@ -51,7 +57,7 @@ const range = {
 const cadence = {
   id: 'upgrade-cadence',
   name: 'Cadencia mejorada',
-  symbol: '⚡',
+  symbol: '*',
   type: 'upgrade',
   fieldPickup: false,
 
@@ -66,7 +72,7 @@ const cadence = {
 const multishot = {
   id: 'upgrade-multishot',
   name: 'Multidisparo',
-  symbol: '≡',
+  symbol: '=',
   type: 'upgrade',
   fieldPickup: false,
 

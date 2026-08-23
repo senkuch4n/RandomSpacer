@@ -319,7 +319,7 @@ class TerminalRenderer {
       for (let i = 0; i < menu.coopItems.length; i++) {
         const item = menu.coopItems[i]
         const isSelected = i === menu.coopSelected
-        const pointer = isSelected && blinkOn ? '▶ ' : '  '
+        const pointer = isSelected && blinkOn ? '> ' : '  '
         push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
       }
       push('', null)
@@ -329,7 +329,11 @@ class TerminalRenderer {
       for (let i = 0; i < menu.items.length; i++) {
         const item = menu.items[i]
         const isSelected = i === menu.selected
-        const pointer = isSelected && blinkOn ? '▶ ' : '  '
+        // ASCII-only selection pointer: a blinking wide glyph would make the
+        // row's visible width toggle every 400ms, wrapping alternate frames
+        // and shaking the whole layout (same class of bug as the modal's
+        // old ⚔/⚡ symbols — see items/upgrades.js).
+        const pointer = isSelected && blinkOn ? '> ' : '  '
         push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
       }
       push('', null)
@@ -406,7 +410,7 @@ class TerminalRenderer {
     for (let i = 0; i < menu.rankingItems.length; i++) {
       const item = menu.rankingItems[i]
       const isSelected = i === menu.rankingSelected
-      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      const pointer = isSelected && blinkOn ? '> ' : '  '
       push(pointer + item.label, isSelected ? BOLD + C.brightYellow : C.white)
     }
     push('', null)
@@ -733,7 +737,7 @@ class TerminalRenderer {
     push('', null)
     for (let i = 0; i < options.length; i++) {
       const isSelected = i === confirmQuit.selected
-      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      const pointer = isSelected && blinkOn ? '> ' : '  '
       push(pointer + options[i], isSelected ? BOLD + C.brightYellow : C.white)
     }
     push('', null)
@@ -764,7 +768,7 @@ class TerminalRenderer {
       for (let i = 0; i < choice.options.length; i++) {
         const opt = choice.options[i]
         const isSelected = i === choice.selected
-        const pointer = isSelected && blinkOn ? '▶ ' : '  '
+        const pointer = isSelected && blinkOn ? '> ' : '  '
         push(pointer + opt.label, isSelected ? BOLD + C.brightYellow : C.white)
       }
       push('', null)
@@ -798,7 +802,7 @@ class TerminalRenderer {
     for (let i = 0; i < choice.options.length; i++) {
       const def = choice.options[i]
       const isSelected = i === choice.selected
-      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      const pointer = isSelected && blinkOn ? '> ' : '  '
       const label = pad(pointer + def.name, inner - 3) + ' ' + def.symbol
       const color = isSelected ? BOLD + C.brightYellow : ITEM_TYPE_COLORS[def.type] || C.white
       push(label, color)
