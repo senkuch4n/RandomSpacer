@@ -336,6 +336,7 @@ class TerminalRenderer {
       push('', null)
       pushCentered('¡Actualización P2P recibida!', BOLD + C.brightGreen)
       pushCentered('✓ Build verificada en vivo', BOLD + C.brightMagenta)
+      pushCentered('✓ Actualizaciones P2P en tiempo real', BOLD + C.brightYellow)
     }
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
