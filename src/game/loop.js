@@ -255,13 +255,16 @@ function startGame({ rng, onExit, storageDir }) {
   // part. Whichever peer's connection role comes out on top (a
   // deterministic public-key compare both sides make independently) runs
   // the real World and is authoritative; the other just sends its input
-  // and renders whatever state it's told. Q always quits the whole app,
-  // same as everywhere else, including while still searching. Relies on
-  // the DHT actually punching a hole between both players' networks — if
-  // that fails (some NAT/firewall setups), "Crear partida"/"Unirse con
-  // código" below use the same connection mechanism on a private topic,
-  // which at least guarantees the two players are looking for each other
-  // specifically rather than depending on who else is in the public lobby.
+  // and renders whatever state it's told. Q here cancels the search and
+  // returns to the menu (matching the "Q para cancelar" hint) rather than
+  // quitting the whole app like it does everywhere else — input.onQuit is
+  // temporarily repointed at cancelSearch below and restored the moment
+  // this screen is left, however it's left. Relies on the DHT actually
+  // punching a hole between both players' networks — if that fails (some
+  // NAT/firewall setups), "Crear partida"/"Unirse con código" below use
+  // the same connection mechanism on a private topic, which at least
+  // guarantees the two players are looking for each other specifically
+  // rather than depending on who else is in the public lobby.
   function runCoopSearch(difficulty) {
     currentSetStatus = (message) => {
       pendingStatus = message
@@ -271,10 +274,14 @@ function startGame({ rng, onExit, storageDir }) {
     let settled = false
     let tick = 0
     const startedAt = Date.now()
+    const restoreQuit = () => {
+      input.onQuit = () => stop(0)
+    }
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearInterval(timer)
       console.error('[coop-search:timeout] no peer found within', CONNECT_TIMEOUT_MS, 'ms')
       session.close().catch(() => {})
@@ -282,9 +289,21 @@ function startGame({ rng, onExit, storageDir }) {
       runMenu()
     }, CONNECT_TIMEOUT_MS)
 
+    input.onQuit = () => {
+      if (settled) return
+      settled = true
+      restoreQuit()
+      clearTimeout(timeoutHandle)
+      clearInterval(timer)
+      session.close().catch(() => {})
+      pendingStatus = 'Búsqueda cancelada'
+      runMenu()
+    }
+
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearTimeout(timeoutHandle)
       clearInterval(timer)
       wireLeaderboardSync(session)
@@ -308,6 +327,7 @@ function startGame({ rng, onExit, storageDir }) {
     session.findMatch().catch((err) => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-search:error]', err)
@@ -331,10 +351,14 @@ function startGame({ rng, onExit, storageDir }) {
     let settled = false
     let tick = 0
     const startedAt = Date.now()
+    const restoreQuit = () => {
+      input.onQuit = () => stop(0)
+    }
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearInterval(timer)
       console.error('[coop-host-code:timeout] no peer joined within', CONNECT_TIMEOUT_MS, 'ms')
       session.close().catch(() => {})
@@ -342,9 +366,23 @@ function startGame({ rng, onExit, storageDir }) {
       runMenu()
     }, CONNECT_TIMEOUT_MS)
 
+    // Q here cancels back to the menu instead of quitting the app — same
+    // reasoning as runCoopSearch above.
+    input.onQuit = () => {
+      if (settled) return
+      settled = true
+      restoreQuit()
+      clearTimeout(timeoutHandle)
+      clearInterval(timer)
+      session.close().catch(() => {})
+      pendingStatus = 'Partida cancelada'
+      runMenu()
+    }
+
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearTimeout(timeoutHandle)
       clearInterval(timer)
       wireLeaderboardSync(session)
@@ -368,6 +406,7 @@ function startGame({ rng, onExit, storageDir }) {
     session.findMatch(topicFromCode(code)).catch((err) => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-host-code:error]', err)
@@ -426,10 +465,14 @@ function startGame({ rng, onExit, storageDir }) {
     let settled = false
     let tick = 0
     const startedAt = Date.now()
+    const restoreQuit = () => {
+      input.onQuit = () => stop(0)
+    }
 
     const timeoutHandle = setTimeout(() => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearInterval(timer)
       console.error('[coop-join-connecting:timeout] no host found within', CONNECT_TIMEOUT_MS, 'ms')
       session.close().catch(() => {})
@@ -437,9 +480,23 @@ function startGame({ rng, onExit, storageDir }) {
       runMenu()
     }, CONNECT_TIMEOUT_MS)
 
+    // Q here cancels back to the menu instead of quitting the app — same
+    // reasoning as runCoopSearch above.
+    input.onQuit = () => {
+      if (settled) return
+      settled = true
+      restoreQuit()
+      clearTimeout(timeoutHandle)
+      clearInterval(timer)
+      session.close().catch(() => {})
+      pendingStatus = 'Conexión cancelada'
+      runMenu()
+    }
+
     session.onConnected = (isHost) => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearTimeout(timeoutHandle)
       clearInterval(timer)
       wireLeaderboardSync(session)
@@ -463,6 +520,7 @@ function startGame({ rng, onExit, storageDir }) {
     session.findMatch(topicFromCode(code)).catch((err) => {
       if (settled) return
       settled = true
+      restoreQuit()
       clearTimeout(timeoutHandle)
       clearInterval(timer)
       console.error('[coop-join-connecting:error]', err)
