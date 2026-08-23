@@ -302,7 +302,7 @@ class TerminalRenderer {
       push('  E        cambiar arma', DIM + C.gray)
       push('  X        habilidad', DIM + C.gray)
       push('  R        ranking', DIM + C.gray)
-      push('  Q        salir', DIM + C.gray)
+      push('  Q        volver al menú', DIM + C.gray)
       push('', null)
       pushCentered('Espacio para volver', C.brightCyan)
     } else if (menu.screen === 'coop') {
@@ -516,7 +516,7 @@ class TerminalRenderer {
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
   }
 
-  render(world, localPlayerIndex = 0, topEntries = []) {
+  render(world, localPlayerIndex = 0, topEntries = [], confirmQuit = null) {
     const cols = this.columns
     const rows = this.rows
 
@@ -699,8 +699,41 @@ class TerminalRenderer {
 
     if (world.itemChoice) blitModal(this._itemChoiceLines(world.itemChoice))
     if (world.gameOver) blitModal(this._gameOverLines(world))
+    if (confirmQuit) blitModal(this._confirmQuitLines(confirmQuit))
 
     this.out.write('\x1b[H' + grid.map((row) => row.join('')).join('\r\n'))
+  }
+
+  // Q opens this over the (frozen) arena instead of quitting outright —
+  // see loop.js's makeConfirmQuit. `confirmQuit` is just { selected }: 0
+  // is "Sí" (leave to the main menu), 1 is "No" (resume) and is the
+  // default, so a reflex Q + Enter can't quit by accident.
+  _confirmQuitLines(confirmQuit) {
+    const width = 28
+    const inner = width - 2
+    const blinkOn = Math.floor(Date.now() / 400) % 2 === 0
+    const options = ['Sí, volver al menú', 'No, seguir jugando']
+
+    const body = []
+    const push = (text, color) => body.push({ text: pad(text, inner), color })
+    const pushCentered = (text, color) => body.push({ text: center(text, inner), color })
+
+    pushCentered('¿Salir al menú?', BOLD + C.brightYellow)
+    push('', null)
+    for (let i = 0; i < options.length; i++) {
+      const isSelected = i === confirmQuit.selected
+      const pointer = isSelected && blinkOn ? '▶ ' : '  '
+      push(pointer + options[i], isSelected ? BOLD + C.brightYellow : C.white)
+    }
+    push('', null)
+    pushCentered('W/S elegir · Enter', DIM + C.gray)
+
+    const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
+    for (const { text, color } of body) {
+      lines.push({ text: '│' + text + '│', color: color || BORDER_COLOR })
+    }
+    lines.push({ text: '└' + '─'.repeat(inner) + '┘', color: BORDER_COLOR })
+    return lines
   }
 
   _gameOverLines(world) {
@@ -846,7 +879,7 @@ class TerminalRenderer {
     push(pad(' E        cambiar', inner), DIM + C.gray)
     push(pad(' X        habilidad', inner), DIM + C.gray)
     push(pad(' R        ranking', inner), DIM + C.gray)
-    push(pad(' Q        salir', inner), DIM + C.gray)
+    push(pad(' Q        menú', inner), DIM + C.gray)
 
     if (world.statusMessage) {
       push(pad('', inner), null)
