@@ -52,6 +52,52 @@ const EMPTY_INPUT = {
   toggleRanking: false
 }
 
+// Shared by runGame/runCoopHost/runCoopGuest: Q used to be wired straight
+// to quitting the whole app mid-match, which is exactly the "I pressed Q
+// and the app just closed" complaint this replaces — it now opens a small
+// "¿Volver al menú?" confirmation (toggling shut again on a second Q, same
+// as R's ranking overlay) and only calls `onConfirm` once the player
+// actually picks "Sí, volver al menú". Confirm is Enter specifically (not
+// Space/fire), matching world.js's item-choice modal, so a reflex shot
+// fired right as the dialog opens can't also answer it.
+function makeConfirmQuit(onConfirm) {
+  let open = false
+  let selected = 1 // "No" by default — an accidental Q+Enter shouldn't quit
+  let prevUp = false
+  let prevDown = false
+  let prevConfirm = false
+
+  return {
+    toggle() {
+      open = !open
+      if (open) selected = 1
+    },
+    get isOpen() {
+      return open
+    },
+    // Consumes this tick's up/down/confirm edges. Returns { selected } to
+    // render, or null once the dialog has closed (cancelled, or handed
+    // off to onConfirm) — the caller should skip rendering this tick in
+    // that case rather than draw a screen that's about to be replaced.
+    tick(inp) {
+      const upEdge = inp.up && !prevUp
+      const downEdge = inp.down && !prevDown
+      const confirmEdge = inp.confirm && !prevConfirm
+      prevUp = inp.up
+      prevDown = inp.down
+      prevConfirm = inp.confirm
+
+      if (upEdge || downEdge) selected = selected === 0 ? 1 : 0
+      if (confirmEdge) {
+        open = false
+        if (selected === 0) onConfirm()
+        return null
+      }
+      return { selected }
+    }
+  }
+}
+
 // Wires the World simulation to a terminal renderer + raw keyboard input
 // and drives it on a fixed-ish tick. Starts on a title menu (reusing the
 // same renderer/input instances) and only creates the World once the
@@ -198,6 +244,13 @@ function startGame({ rng, onExit, storageDir }) {
     let lastTick = Date.now()
     let recorded = false // guards against re-recording every tick spent on the game-over screen
     let showRanking = false // R toggles a full-screen ranking view, pausing the sim while it's open
+    const confirmQuit = makeConfirmQuit(() => {
+      clearInterval(timer)
+      input.resetHeld()
+      input.onQuit = () => stop(0)
+      runMenu()
+    })
+    input.onQuit = () => confirmQuit.toggle()
 
     renderer.onResize(() => {
       const size = renderer.arenaSize()
@@ -215,6 +268,13 @@ function startGame({ rng, onExit, storageDir }) {
       // then surface the error.
       try {
         const inp = input.snapshot()
+
+        if (confirmQuit.isOpen) {
+          const overlay = confirmQuit.tick(inp)
+          if (overlay) renderer.render(world, 0, topEntriesFor('solo', 3), overlay)
+          return
+        }
+
         if (inp.toggleRanking) showRanking = !showRanking
 
         if (showRanking) {
@@ -542,6 +602,7 @@ function startGame({ rng, onExit, storageDir }) {
     }
     session.onDisconnected = () => {
       clearInterval(timer)
+      input.onQuit = () => stop(0)
       session.close().catch(() => {})
       pendingStatus = 'El compañero se desconectó'
       runMenu()
@@ -550,6 +611,19 @@ function startGame({ rng, onExit, storageDir }) {
     let lastTick = Date.now()
     let recorded = false
     let showRanking = false // pressing R here pauses the sim for both peers — see runGame's comment
+    // Q here asks to leave to the menu instead of quitting outright — same
+    // as runGame, except confirming also closes the shared session, which
+    // disconnects the guest (its own onDisconnected sends it back to its
+    // menu too).
+    const confirmQuit = makeConfirmQuit(() => {
+      clearInterval(timer)
+      input.resetHeld()
+      input.onQuit = () => stop(0)
+      session.close().catch(() => {})
+      runMenu()
+    })
+    input.onQuit = () => confirmQuit.toggle()
+
     renderer.onResize(() => {
       const size = renderer.arenaSize()
       world.resize(size.width, size.height)
@@ -562,6 +636,16 @@ function startGame({ rng, onExit, storageDir }) {
 
       try {
         const inp = input.snapshot()
+
+        if (confirmQuit.isOpen) {
+          const overlay = confirmQuit.tick(inp)
+          if (overlay) {
+            renderer.render(world, 0, topEntriesFor('coop', 3), overlay)
+            session.sendState(world.toSnapshot())
+          }
+          return
+        }
+
         if (inp.toggleRanking) showRanking = !showRanking
 
         if (showRanking) {
@@ -586,6 +670,7 @@ function startGame({ rng, onExit, storageDir }) {
         } else if (world.gameOverAction === 'menu') {
           clearInterval(timer)
           input.resetHeld()
+          input.onQuit = () => stop(0)
           session.close().catch(() => {})
           runMenu()
         }
@@ -615,14 +700,36 @@ function startGame({ rng, onExit, storageDir }) {
     }
     session.onDisconnected = () => {
       clearInterval(timer)
+      input.onQuit = () => stop(0)
       session.close().catch(() => {})
       pendingStatus = 'El anfitrión se desconectó'
       runMenu()
     }
 
+    // Q here can't pause the host's simulation (the guest doesn't own it),
+    // so confirming just leaves the match on this side — the host's own
+    // onDisconnected sends it back to its menu too.
+    const confirmQuit = makeConfirmQuit(() => {
+      clearInterval(timer)
+      input.onQuit = () => stop(0)
+      session.close().catch(() => {})
+      runMenu()
+    })
+    input.onQuit = () => confirmQuit.toggle()
+
     timer = setInterval(() => {
       try {
         const inp = input.snapshot()
+
+        if (confirmQuit.isOpen) {
+          const overlay = confirmQuit.tick(inp)
+          session.sendInput(EMPTY_INPUT)
+          if (overlay && latestState) {
+            renderer.render(latestState, 1, topEntriesFor('coop', 3), overlay)
+          }
+          return
+        }
+
         if (inp.toggleRanking) showRanking = !showRanking
 
         // The guest doesn't own the simulation, so opening the ranking
