@@ -1,7 +1,7 @@
 {
   "name": "randomspace",
   "productName": "randomspace",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Terminal Asteroids-like with rotating bosses and pickups, shipped on Pear with P2P OTA updates.",
   "private": true,
   "bin": "bin.mjs",

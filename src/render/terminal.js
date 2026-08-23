@@ -333,6 +333,8 @@ class TerminalRenderer {
       push('', null)
       pushCentered('Aleph Hackathon — Pears Track', DIM + C.brightGreen)
       pushCentered('Joel Serrudo · Lautaro Aponte', DIM + C.gray)
+      push('', null)
+      pushCentered('¡Actualización P2P recibida!', BOLD + C.brightGreen)
     }
 
     const lines = [{ text: '┌' + '─'.repeat(inner) + '┐', color: BORDER_COLOR }]
