@@ -7,7 +7,7 @@ Built for the **Pears Track** at [hackathon]. Started from [`hello-pear-bare`][h
 ## Play it
 
 ```sh
-pear install pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy
+pear install pear://ze8mc7gygcbp7wmihyh9d66fgt6879tkb8afde3xuw4fsd8utn6o
 ```
 
 Then run the installed `randomspace` binary in a real terminal (raw keyboard input needs a TTY — it won't work piped or in a non-interactive shell).
@@ -89,10 +89,12 @@ npm start -- --updates
 1. Change game code under `src/` (e.g. add a boss to `src/bosses/index.js`) and bump `version` in `package.json`.
 2. Rebuild the binary for every platform you ship: `npm run make:darwin-arm64`, `make:darwin-x64`, `make:linux-arm64`, `make:linux-x64`, `make:win32-arm64`, `make:win32-x64`.
 3. Assemble `by-arch/<platform-arch>/app/<name>` as a **flat executable file** for each platform (`<name>.exe` on Windows) — do not wrap it in a same-named directory; `pear-runtime-updater`'s swap-and-restart expects `by-arch/<host>/app/<name>` to be a single file matching the installed binary 1:1. `pear build`'s CLI forces a directory input, so build this by hand instead: `mkdir -p by-arch/<arch>/app && cp out/<arch>/randomspace by-arch/<arch>/app/randomspace`.
-4. `pear stage pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy .` (dry-run first) — stage `package.json`, `src/`, and the fresh `by-arch/` together.
-5. Keep `pear seed pear://jth7o3qxuc9ndhcmkjhbabht5i68m73wm8sqekdunkqewdw6akiy` running somewhere reachable — installed copies only get the update if a seeder is up.
+4. `pear stage pear://ze8mc7gygcbp7wmihyh9d66fgt6879tkb8afde3xuw4fsd8utn6o .` (dry-run first) — stage `package.json`, `src/`, and the fresh `by-arch/` together.
+5. Keep `pear seed pear://ze8mc7gygcbp7wmihyh9d66fgt6879tkb8afde3xuw4fsd8utn6o` running somewhere reachable — installed copies only get the update if a seeder is up.
 
 Verified end-to-end during this hackathon: an already-running installed copy detected a staged update, downloaded it, applied it, and after a manual restart came back as a flat single-file binary (no nesting) showing the new version and the new content.
+
+**Seed from a host with a real public IP, not a home connection behind CGNAT.** The link was first staged and seeded from a home laptop; `pear install` timed out for everyone (self, mobile data, everyone) because the ISP's router only had a private WAN IP (`192.168.x.x`, one more NAT hop from the actual public IP) — no router setting fixes that, since the block is upstream of the router entirely. Re-seeded from a small cloud VM (Oracle Cloud free tier, Ubuntu) with a real public IPv4 instead, which fixed it immediately. Two things to check on any new seed host: the OS-level firewall (Ubuntu on Oracle images ships an `iptables` `INPUT` chain that only allows port 22 by default — add an `ACCEPT` rule for inbound UDP before the trailing `REJECT`, since Hyperswarm's DHT/hole-punching needs it) and the cloud provider's own security group/list (needs an inbound rule allowing UDP, separately from the OS firewall). Also: **Pear's local corestore storage is not portable between operating systems** — copying `~/Library/Application Support/pear` (macOS) to `~/.config/pear` (Linux) fails with `Invalid device file, was made on different platform` (RocksDB ties the storage format to the OS it was created on). Moving a project to a new host on a different OS means running `pear touch` fresh there (a new link) rather than copying state across — this project's link changed once for exactly this reason.
 
 Note: only production `dependencies` (not `devDependencies` like `bare-build`, `prettier`, `lunte`, `brittle`) should be staged — see `.gitignore` and stage from a clean `npm ci --omit=dev` copy if staging from a dir that has dev tooling installed, to avoid shipping hundreds of MB of build toolchain into the P2P drive.
 
