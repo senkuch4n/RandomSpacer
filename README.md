@@ -1,5 +1,10 @@
 # RandomSpace
 
+<p align="center">
+  <img width="640" height="640" alt="photo" src="https://github.com/user-attachments/assets/daab89c4-3065-435d-94f1-b72fa1ab43bc" />
+</p>
+
+
 > Terminal Asteroids-like with rotating bosses and item pickups, deployed on Pear with peer-to-peer OTA updates.
 
 Built for the **Pears Track** at the Aleph Hackathon (Buenos Aires) by Joel Serrudo and Lautaro Aponte. Started from [`hello-pear-bare`][hello-pear-bare], **`main` branch** (the updater runs `pear-runtime` inside a Bare worker thread, keeping P2P/update logic off the main thread while the game loop owns it).
